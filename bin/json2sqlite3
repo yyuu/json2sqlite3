@@ -1,0 +1,747 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+[[ -z "${DEBUG:-}" ]] || set -x
+
+TMPDIR="$(mktemp -d)"
+VERSION="@@JSON2SQLITE3_VERSION@@"
+VERBOSITY=2
+
+on_exit() {
+  rm -fr "${TMPDIR}"
+}
+
+trap on_exit EXIT
+
+error() {
+  if [[ -n "${VERBOSE:-}" ]] || [[ "${VERBOSITY:-0}" -ge 0 ]]; then
+    { if [[ -t 2 ]]; then printf '\033[1;31m'; fi
+      if [[ $# -eq 0 ]]; then cat; else printf '%s\n' "$*"; fi
+      if [[ -t 2 ]]; then printf '\033[0m'; fi
+    } 1>&2
+  fi
+}
+
+warn() {
+  if [[ -n "${VERBOSE:-}" ]] || [[ "${VERBOSITY:-1}" -ge 1 ]]; then
+    { if [[ -t 2 ]]; then printf '\033[1;33m'; fi
+      if [[ $# -eq 0 ]]; then cat; else printf '%s\n' "$*"; fi
+      if [[ -t 2 ]]; then printf '\033[0m'; fi
+    } 1>&2
+  fi
+}
+
+info() {
+  if [[ -n "${VERBOSE:-}" ]] || [[ "${VERBOSITY:-2}" -ge 2 ]]; then
+    { if [[ -t 2 ]]; then printf '\033[0;32m'; fi
+      if [[ $# -eq 0 ]]; then cat; else printf '%s\n' "$*"; fi
+      if [[ -t 2 ]]; then printf '\033[0m'; fi
+    } 1>&2
+  fi
+}
+
+debug() {
+  if [[ -n "${VERBOSE:-}" ]] || [[ "${VERBOSITY:-3}" -ge 3 ]]; then
+    { if [[ -t 2 ]]; then printf '\033[0;37m'; fi
+      if [[ $# -eq 0 ]]; then cat; else printf '%s\n' "$*"; fi
+      if [[ -t 2 ]]; then printf '\033[0m'; fi
+    } 1>&2
+  fi
+}
+
+validate_ident() {
+  local ident
+  for ident in "$@"; do
+    if [[ ! "${ident:-}" =~ ^[A-Z_a-z][0-9A-Z_a-z]*$ ]]; then
+      warn "${0##*/}: invalid identifier for SQLite3 tables/columns: ${ident:-}"
+      return 1
+    fi
+  done
+}
+
+ppq() {
+  shift 1 # skipping database file
+  local arg # expecting SQL statements to follow...
+  for arg in "$@"; do
+    local lines
+    mapfile -t lines <<< "${arg}"
+    local continued_p=
+    local line
+    for line in "${lines[@]}"; do
+      if [[ -z "${continued_p:-}" ]]; then
+        debug "sqlite3> ${line:-}"
+        if [[ "${line:-}" == "."* ]] || [[ "${line:-}" == *";" ]]; then
+          :
+        else
+          continued_p=1
+        fi
+      else
+        debug "    ...> ${line:-}"
+      fi
+    done
+  done
+}
+
+runq_safe() {
+  ppq "$@"
+  sqlite3 "$@"
+}
+
+runq() {
+  ppq "$@"
+  if [[ -z "${DRY_RUN:-}" ]]; then
+    local cmderr
+    cmderr="$(mktemp "${TMPDIR}/cmderr.XXXXXXXX")"
+    if ! sqlite3 "$@" 2>"${cmderr}"; then
+      exit_status="$?"
+      { echo "${0##*/}: sqlite3 failed with exit status ${exit_status}: sqlite3 $*"
+        cat "${cmderr}"
+      } | error
+      return "${exit_status:-1}"
+    fi
+  fi
+}
+
+compare_column_specs() {
+  local control_column_specs="$1"
+  local test_column_specs="$2"
+  local cmdout
+  cmdout="$(mktemp "${TMPDIR}/cmdout.XXXXXXXX")"
+  if diff -u <(jq --raw-output 'map([.name, .type]) | sort[] | @tsv' <<< "${control_column_specs}") \
+               <(jq --raw-output 'map([.name, .type]) | sort[] | @tsv' <<< "${test_column_specs}") 1>"${cmdout}"; then
+    :
+  else
+    exit_status="$?"
+    { echo "${0##*/:}: detected schema drift on table column(s)..."
+      cat "${cmdout}"
+    } | info
+    return "${exit_status:-1}"
+  fi
+}
+
+detect_column_specs_from_args() {
+  local arg
+  local cid=0
+  local specs='[]'
+  for arg in "$@"; do
+    local _name="${arg%%:*}"
+    local _type="${arg#*:}"
+    validate_ident "${_name}"
+    specs="$(jq --argjson cid "${cid}" --arg _name "${_name}" --arg _type "${_type}" --compact-output '. + [{cid: $cid, name: $_name, type: $_type}]' <<< "${specs}")"
+    cid="$(( cid + 1 ))"
+  done
+  echo "${specs}"
+}
+
+detect_column_specs_from_json() {
+  local json_file="$1"
+  local csv_file
+  csv_file="$(mktemp "${TMPDIR}/csv_file.XXXXXXXX")"
+  jq --raw-output 'map(
+    to_entries | map(
+      (.value | type) as $json_type |
+        (if "array" == $json_type then
+          "JSON"
+        elif "boolean" == $json_type then
+          "INTEGER"
+        elif "null" == $json_type then
+          "JSON"
+        elif "number" == $json_type then
+          "NUMERIC"
+        elif "object" == $json_type then
+          "JSON"
+        elif "string" == $json_type then
+          "TEXT"
+        else
+          error("unsupported JSON data type: \(.value):\($json_type)")
+        end) as $sqlite_type | [.key, $sqlite_type]
+      )
+  ) | add[] | @csv' < "${json_file}" > "${csv_file}"
+  runq_safe "/dev/null" \
+    "CREATE TEMPORARY TABLE _xs (name TEXT, type TEXT);" \
+    "CREATE TEMPORARY TABLE xs (cid INTEGER PRIMARY KEY, name TEXT, type TEXT);" \
+    "CREATE UNIQUE INDEX xs_name_type ON xs (name, type);" \
+    ".mode csv" \
+    ".import '${csv_file}' _xs" \
+    ".mode ascii" \
+    "INSERT OR IGNORE INTO xs (name, type) SELECT name, type FROM _xs;" \
+    "SELECT json_group_array(json_object('cid', cid, 'name', name, 'type', type)) FROM xs ORDER BY cid;"
+}
+
+detect_column_specs_from_table() {
+  local database_file="$1"
+  local table_name="$2"
+  runq_safe "${database_file}" \
+    ".parameter set @table_name '${table_name}'" \
+    "SELECT json_group_array(json_object('cid', cid, 'name', name, 'type', type)) FROM pragma_table_info(@table_name) ORDER BY cid;"
+}
+
+build_create_table_statement() {
+  local pk
+  local temporary_p
+  while [[ $# -gt 0 ]]; do
+    case "${1:-}" in
+    "--pk="* ) pk="${1#*=}" ;;
+    "--temporary" ) temporary_p=1 ;;
+    * ) break ;;
+    esac
+    shift 1
+  done
+  local database_file="$1"
+  local table_name="$2"
+  local create_table_specs="$3"
+  local stmt
+  if [[ -z "${temporary_p:-}" ]]; then
+    stmt="CREATE TABLE \"${table_name}\" ("
+  else
+    stmt="CREATE TEMPORARY TABLE \"${table_name}\" ("
+  fi
+  local _columns
+  mapfile -t _columns < <(jq --raw-output 'map("\(.name):\(.type)")[]' <<< "${create_table_specs}")
+  local _column
+  for _column in "${_columns[@]}"; do
+    validate_ident "${_column%%:*}"
+    if [[ "${_column%%:*}" == "${pk:-}" ]]; then
+      column_type+=" PRIMARY KEY"
+    fi
+    stmt+=$'\n'
+    stmt+="  \"${_column%%:*}\" ${_column#*:},"
+  done
+  stmt="${stmt%,}"
+  stmt+=$'\n)'
+  echo "${stmt};"
+}
+
+build_insert_into_table_from_table_statement() {
+  local insert_or_replace_p
+  while [[ $# -gt 0 ]]; do
+    case "${1:-}" in
+    "--insert-or-replace" ) insert_or_replace_p=1 ;;
+    * ) break ;;
+    esac
+    shift 1
+  done
+  local database_file="$1"
+  local table_name="$2"
+  local source_table_name="$3"
+  local table_column_specs="$4"
+  local stmt
+  if [[ -n "${insert_or_replace_p:-}" ]]; then
+    stmt="INSERT OR REPLACE INTO \"${table_name}\" ("
+  else
+    stmt="INSERT INTO \"${table_name}\" ("
+  fi
+  local _columns
+  mapfile -t _columns < <(jq --raw-output 'map("\(.name):\(.type)")[]' <<< "${table_column_specs}")
+  local _column
+  for _column in "${_columns[@]}"; do
+    validate_ident "${_column%%:*}"
+    stmt+=$'\n'
+    stmt+="  \"${_column%%:*}\","
+  done
+  stmt="${stmt%,}"
+  stmt+=$'\n) SELECT'
+  for _column in "${_columns[@]}"; do
+    validate_ident "${_column%%:*}"
+    stmt+=$'\n'
+    stmt+="  \"${_column%%:*}\","
+  done
+  stmt="${stmt%,}"
+  stmt+=$'\nFROM\n'
+  stmt+="  \"${source_table_name}\";"
+  echo "${stmt}"
+}
+
+reconcile_table() {
+  local pk
+  while [[ $# -gt 0 ]]; do
+    case "${1:-}" in
+    "--pk="* ) pk="${1#*=}" ;;
+    * ) break ;;
+    esac
+    shift 1
+  done
+  local database_file="$1"
+  local table_name="$2"
+  local current_column_specs="$3"
+  local detected_column_specs="$4"
+  local xs
+  local ys
+  xs="$(mktemp "${TMPDIR}/xs.XXXXXXXX")"
+  ys="$(mktemp "${TMPDIR}/ys.XXXXXXXX")"
+  jq --raw-output 'map([.cid, .name, .type])[] | @csv' <<< "${current_column_specs}" > "${xs}"
+  jq --raw-output 'map([.cid, .name, .type])[] | @csv' <<< "${detected_column_specs}" > "${ys}"
+  reconciled_column_specs="$(runq_safe "${database_file}" \
+    "CREATE TEMPORARY TABLE xs (cid INTEGER PRIMARY KEY, name TEXT, type TEXT);" \
+    "CREATE TEMPORARY TABLE ys (cid INTEGER PRIMARY KEY, name TEXT, type TEXT);" \
+    ".mode csv" \
+    ".import '${xs}' xs" \
+    ".import '${ys}' ys" \
+    ".mode ascii" \
+    "WITH zs AS (
+      SELECT
+        name,
+        type
+      FROM
+        xs
+      UNION SELECT
+        name,
+        type
+      FROM ys
+    ) SELECT
+      json_group_array(
+        json_object(
+          'cid', (
+            CASE
+            WHEN xs.cid IS NULL THEN ys.cid+(SELECT COUNT(1) FROM xs)
+            ELSE xs.cid
+            END
+          ),
+          'name', zs.name,
+          'type', zs.type
+        )
+      )
+    FROM
+      zs
+    LEFT JOIN
+      xs
+        ON zs.name = xs.name
+    LEFT JOIN
+      ys
+        ON zs.name = ys.name
+    ORDER BY (
+      CASE
+      WHEN xs.cid IS NULL THEN ys.cid+(SELECT COUNT(1) FROM xs)
+      ELSE xs.cid
+      END
+    );" \
+  )"
+  local backup_table_name
+  backup_table_name="_${table_name}_backup$(date '+%s')"
+  runq_args=(
+    "BEGIN TRANSACTION;"
+    "DROP TABLE IF EXISTS \"${backup_table_name}\";"
+    "ALTER TABLE \"${table_name}\" RENAME TO \"${backup_table_name}\";"
+  )
+  runq_args+=("$(build_create_table_statement --pk="${pk:-}" "${database_file}" "${table_name}" "${reconciled_column_specs}")")
+  runq_args+=("$(build_insert_into_table_from_table_statement --insert-or-replace "${database_file}" "${table_name}" "${backup_table_name}" "${reconciled_column_specs}")")
+  # TODO: DROP TABLE IF EXISTS "${backup_table_name}"...
+  runq_args+=("COMMIT TRANSACTION;")
+  runq "${database_file}" "${runq_args[@]}"
+}
+
+create_table() {
+  local pk
+  while [[ $# -gt 0 ]]; do
+    case "${1:-}" in
+    "--pk="* ) pk="${1#*=}" ;;
+    * ) break ;;
+    esac
+    shift 1
+  done
+  local database_file="$1"
+  local table_name="$2"
+  local table_column_specs="$3"
+  runq "${database_file}" "$(build_create_table_statement --pk="${pk:-}" "${database_file}" "${table_name}" "${table_column_specs}")"
+}
+
+arg_after_queries=()
+arg_alter_table=1
+arg_before_queries=()
+arg_column_specs=() # contains columns including special columns e.g. primary key, created/updated/deleted
+arg_create_table=1
+arg_created_column=
+arg_deleted_column=
+arg_generic_column_specs=() # contains generic columns only
+arg_insert_if_empty=
+arg_output=
+arg_preserve_created=
+arg_primary_key_column=
+arg_soft_delete=
+arg_updated_column=
+
+while [[ $# -gt 0 ]]; do
+  case "${1:-}" in
+  "--" )
+    break
+    ;;
+  "--after-query" | "--after-query="* )
+    if [[ "$1" == *"="* ]]; then
+      arg_after_queries+=("${1#*=}")
+    else
+      arg_after_queries+=("${2:-}")
+      shift 1
+    fi
+    ;;
+  "--before-query" | "--before-query="* )
+    if [[ "$1" == *"="* ]]; then
+      arg_before_queries+=("${1#*=}")
+    else
+      arg_before_queries+=("${2:-}")
+      shift 1
+    fi
+    ;;
+  "--create-table" | "--no-create-table" )
+    if [[ "$1" == "--no-"* ]]; then
+      arg_create_table=
+    else
+      arg_create_table=1
+    fi
+    ;;
+  "--created-column" | "--created-column="* )
+    if [[ "$1" == *"="* ]]; then
+      arg_created_column="${1#*=}"
+    else
+      arg_created_column="${2:-}"
+      shift 1
+    fi
+    if [[ "${arg_created_column:-}" != *":"* ]]; then
+      arg_created_column+=":INTEGER"
+    fi
+    arg_column_specs+=("${arg_created_column}")
+    ;;
+  "--deleted-column" | "--deleted-column="* )
+    if [[ "$1" == *"="* ]]; then
+      arg_deleted_column="${1#*=}"
+    else
+      arg_deleted_column="${2:-}"
+      shift 1
+    fi
+    if [[ "${arg_deleted_column:-}" != *":"* ]]; then
+      arg_deleted_column+=":INTEGER"
+    fi
+    arg_column_specs+=("${arg_deleted_column}")
+    ;;
+  "--dry-run" )
+    DRY_RUN=1
+    ;;
+  "--generic-column" | "--generic-column="* )
+    if [[ "$1" == *"="* ]]; then
+      arg_generic_column="${1#*=}"
+    else
+      arg_generic_column="${2:-}"
+      shift 1
+    fi
+    if [[ "${arg_generic_column:-}" != *":"* ]]; then
+      arg_generic_column+=":JSON"
+    fi
+    arg_generic_column_specs+=("${generic_column}")
+    arg_column_specs+=("${generic_column}")
+    ;;
+  "--help" | "-h" )
+    echo "${0##*/} [OPTIONS] DATABASE_FILE:TABLE_NAME < JSON"
+    exit 0
+    ;;
+  "--insert-if-empty" | "--insert-if-empty="* )
+    if [[ "$1" == *"="* ]]; then
+      arg_insert_if_empty="${1#*=}"
+    else
+      arg_insert_if_empty="${2:-}"
+      shift 1
+    fi
+    ;;
+  "--primary-key-column" | "--primary-key-column="* )
+    if [[ "$1" == *"="* ]]; then
+      arg_primary_key_column="${1#*=}"
+    else
+      arg_primary_key_column="${2:-}"
+      shift 1
+    fi
+    if [[ "${arg_primary_key_column:-}" != *":"* ]]; then
+      arg_primary_key_column+=":JSON"
+    fi
+    arg_column_specs+=("${arg_primary_key_column}")
+    ;;
+  "--preserve-created" | "--no-preserve-created" )
+    if [[ "$1" == "--no-"* ]]; then
+      arg_preserve_created=
+    else
+      arg_preserve_created=1
+    fi
+    ;;
+  "--soft-delete" | "--no-soft-delete" )
+    if [[ "$1" == "--no-"* ]]; then
+      arg_soft_delete=
+    else
+      arg_soft_delete=1
+    fi
+    ;;
+  "--updated-column" | "--updated-column="* )
+    if [[ "$1" == *"="* ]]; then
+      arg_updated_column="${1#*=}"
+    else
+      arg_updated_column="${2:-}"
+      shift 1
+    fi
+    if [[ "${arg_updated_column:-}" != *":"* ]]; then
+      arg_updated_column+=":INTEGER"
+    fi
+    arg_column_specs+=("${arg_updated_column}")
+    ;;
+  "--version" )
+    echo "${0##*/} ${VERSION:-n/a}"
+    exit 0
+    ;;
+  "--verbose" | "-v" )
+    VERBOSE=1
+    VERBOSITY="$(( VERBOSITY + 1 ))"
+    ;;
+  * )
+    if [[ -z "${arg_output:-}" ]]; then
+      arg_output="${1:-}"
+    else
+      echo "${0##*/}: error: unrecognized argument: ${1:-}" 1>&2
+      exit 1
+    fi
+    ;;
+  esac
+  shift 1
+done
+
+database_file="${arg_output%:*}"
+table_name="${arg_output##*:}"
+
+if [[ -z "${database_file:-}" ]]; then
+  echo "${0##*/}: SQLite3 database file was not given" 1>&2
+  exit 1
+fi
+
+if [[ -z "${table_name:-}" ]]; then
+  echo "${0##*/}: SQLite3 table name was not given" 1>&2
+  exit 1
+else
+  validate_ident "${table_name}"
+fi
+
+if [[ -z "${arg_primary_key_column:-}" ]]; then
+  pk_column_name=
+else
+  pk_column_name="${arg_primary_key_column%%:*}" # extract type info
+  validate_ident "${pk_column_name}"
+fi
+
+# read from standard input
+json_file="$(mktemp "${TMPDIR}/json_file.XXXXXXXX")"
+cat > "${json_file}"
+
+# managing table schema...
+static_column_specs="$(detect_column_specs_from_args "${arg_column_specs[@]}")"
+if runq_safe "${database_file}" "SELECT 1 FROM \"${table_name}\" LIMIT 1;" 1>/dev/null 2>&1; then
+  current_column_specs="$(detect_column_specs_from_table "${database_file}" "${table_name}")"
+  if [[ ${#arg_generic_column_specs[*]} -eq 0 ]]; then
+    detected_column_specs="$(detect_column_specs_from_json "${json_file}")"
+    if compare_column_specs "${current_column_specs}" "${detected_column_specs}"; then
+      debug "${0##*/}: existing table '${table_name}' has schema compatible with columns detected in importing data." 1>&2
+    else
+      if [[ -z "${arg_alter_table:-}" ]]; then
+        error "${0##*/}: existing table '${table_name}' has schema drift with columns detected in importing data. use --alter-table option to alter table." 1>&2
+        exit 1
+      else
+        warn "${0##*/}: existing table '${table_name}' has schema drift with columns detected in importing data. will alter table..." 1>&2
+        reconcile_table --pk="${pk_column_name:-}" "${database_file}" "${table_name}" "${current_column_specs}" "${detected_column_specs}"
+      fi
+    fi
+  else
+    if compare_column_specs "${current_column_specs}" "${static_column_specs}"; then
+      debug "${0##*/}: existing table '${table_name}' has schema compatible with specified columns." 1>&2
+    else
+      if [[ -z "${arg_alter_table:-}" ]]; then
+        error "${0##*/}: existing table '${table_name}' has schema drift with specified columns. use --alter-table option to alter table." 1>&2
+        exit 1
+      else
+        warn "${0##*/}: existing table '${table_name}' has schema drift with specified columns. will alter table..." 1>&2
+        reconcile_table --pk="${pk_column_name:-}" "${database_file}" "${table_name}" "${current_column_specs}" "${static_column_specs}"
+      fi
+    fi
+  fi
+else
+  if [[ -z "${arg_create_table:-}" ]]; then
+    error "${0##*/}: table '${table_name}' does not exist. use --create-table option to create table." 1>&2
+    exit 1
+  else
+    if [[ ${#arg_generic_column_specs[*]} -eq 0 ]]; then
+      warn "${0##*/}: creating new table '${table_name}' with columns detected in importing data." 1>&2
+      detected_column_specs="$(detect_column_specs_from_json "${json_file}")"
+      create_table --pk="${pk_column_name:-}" "${database_file}" "${table_name}" "${detected_column_specs}"
+    else
+      warn "${0##*/}: creating new table '${table_name}' with specified columns." 1>&2
+      create_table --pk="${pk_column_name:-}" "${database_file}" "${table_name}" "${static_column_specs}"
+    fi
+  fi
+fi
+
+current_column_specs="$(detect_column_specs_from_table "${database_file}" "${table_name}")"
+if [[ -z "${current_column_specs:-}" ]]; then
+  error "${0##*/}: failed to inspect table schema: ${table_name}"
+  exit 1
+fi
+
+json_file_length=0
+if [[ -s "${json_file}" ]]; then
+  # SQLite3's 'json' mode will produce records in array<object> schema.
+  # Here this is expecting that the input data is structured in the same way.
+  json_file_type="$(jq --raw-output 'type' < "${json_file}" || true)"
+  if [[ "${json_file_type:-}" == "array" ]]; then
+    json_file_length="$(jq --raw-output 'length' < "${json_file}" || true)"
+  else
+    echo "${0##*/}: error: input data is not an array: ${json_file}" 1>&2
+    exit 1
+  fi
+else
+  json_file_length=0
+fi
+
+if [[ "${json_file_length:-0}" -eq 0 ]]; then
+  if [[ -z "${arg_insert_if_empty:-}" ]]; then
+    info "${0##*/}: empty file. skipping importing: ${json_file}" 1>&2
+    exit 0
+  else
+    if [[ -z "${arg_primary_key_column:-}" ]] || [[ -z "${arg_created_column:-}" ]] || [[ -z "${arg_updated_column:-}" ]] || [[ -z "${arg_deleted_column:-}" ]]; then
+      error "${0##*/}: you need to specify --primary-key-column, --created-column, --updated-column and --deleted-column to insert negative cache record"
+      exit 1
+    fi
+    validate_ident "${arg_primary_key_column%%:*}" "${arg_created_column%%:*}" "${arg_updated_column%%:*}" "${arg_deleted_column%%:*}"
+    info "${0##*/}: empty file. attempt inserting negative cache record: ${table_name}: ${pk_column_name}=${arg_insert_if_empty}" 1>&2
+    runq "${database_file}" \
+      ".parameter set @arg_insert_if_empty '${arg_insert_if_empty}'" \
+      "BEGIN TRANSACTION;" \
+      "INSERT OR IGNORE INTO \"${table_name}\" (
+         \"${arg_primary_key_column%%:*}\",
+         \"${arg_created_column%%:*}\",
+         \"${arg_updated_column%%:*}\",
+         \"${arg_deleted_column%%:*}\"
+       ) VALUES (
+         @arg_insert_if_empty,
+         cast(strftime('%s') AS ${arg_created_column#*:}),
+         cast(strftime('%s') AS ${arg_updated_column#*:}),
+         cast(strftime('%s') AS ${arg_deleted_column#*:})
+       );" \
+      "UPDATE
+         \"${table_name}\"
+       SET
+         \"${arg_updated_column%%:*}\" = cast(strftime('%s') AS ${arg_updated_column#*:}),
+         \"${arg_deleted_column%%:*}\" = cast(strftime('%s') AS ${arg_deleted_column#*:})
+       WHERE
+         \"${arg_primary_key_column%%:*}\" = @arg_insert_if_empty;" \
+      "COMMIT TRANSACTION;" 2>/dev/null || true
+    exit 0
+  fi
+fi
+
+import_table_name="__import__${table_name}"
+csv_file="$(mktemp "${TMPDIR}/csv_file.XXXXXXXX")"
+if ! jq --argjson current_column_specs "${current_column_specs:-[]}" --raw-output \
+  'map(
+    . as $item |
+    $current_column_specs | map(
+      .name as $column_name |
+      .type as $column_type |
+      if ("BLOB" == $column_type) then
+        $item[$column_name]
+      elif ("NUMERIC" == $column_type) then
+        $item[$column_name]
+      elif ("INTEGER" == $column_type) then
+        $item[$column_name]
+      elif ("JSON" == $column_type) then
+        ($item[$column_name] | tojson)
+      elif ("REAL" == $column_type) then
+        $item[$column_name]
+      elif ("TEXT" == $column_type) then
+        $item[$column_name]
+      else
+        error("unsupported SQLite column data type: \($column_name):\($column_type)")
+      end
+    )
+  )[] | @csv' < "${json_file}" > "${csv_file}"; then
+  { echo "${0##*/}: failed to convert records into CSV format"
+    echo
+    echo "JSON:"
+    head "${json_file}"
+    echo
+  } | error
+  exit 1
+fi
+
+#
+# Avoid importing records directly into the destination table to utilize `INSERT OR REPLACE`.
+# Otherwise the import will be failing if there is some conflicting records in importing data.
+#
+runq_args=(
+  "$(build_create_table_statement --temporary "${database_file}" "${import_table_name}" "${current_column_specs}")"
+  ".mode csv"
+  ".import '${csv_file}' ${import_table_name}"
+  ".mode ascii"
+  "BEGIN TRANSACTION;"
+)
+
+for q in "${arg_before_queries[@]}"; do
+  runq_args+=("${q}")
+done
+
+if [[ -n "${arg_preserve_created:-}" ]]; then
+  if [[ -z "${arg_primary_key_column:-}" ]] || [[ -z "${arg_created_column:-}" ]]; then
+    error "${0##*/}: you need to specify both --primary-key-column and --created-column to preserve created timestamp column"
+    exit 1
+  fi
+  validate_ident "${arg_primary_key_column%%:*}" "${arg_created_column%%:*}"
+  runq_args+=( \
+"UPDATE
+  \"${import_table_name}\"
+SET
+  \"${arg_created_column%%:*}\" = \"${table_name}\".\"${arg_created_column%%:*}\"
+FROM
+  \"${table_name}\"
+WHERE
+  \"${import_table_name}\".\"${arg_primary_key_column%%:*}\" = \"${table_name}\".\"${arg_primary_key_column%%:*}\";" \
+)
+fi
+
+runq_args+=("$(build_insert_into_table_from_table_statement --insert-or-replace "${database_file}" "${table_name}" "${import_table_name}" "${current_column_specs}")")
+
+if [[ -n "${arg_soft_delete:-}" ]]; then
+  if [[ -z "${arg_primary_key_column:-}" ]] || [[ -z "${arg_deleted_column:-}" ]]; then
+    error "${0##*/}: you need to specify both --primary-key-column and --deleted-column to perform soft delete"
+    exit 1
+  fi
+  validate_ident "${arg_primary_key_column%%:*}" "${arg_deleted_column%%:*}"
+  runq_args+=( \
+"UPDATE
+  \"${table_name}\"
+SET
+  \"${arg_deleted_column%%:*}\" = cast(strftime('%s') AS ${arg_deleted_column#*:})
+WHERE
+  \"${arg_deleted_column%%:*}\" < 0
+  AND \"${arg_primary_key_column%%:*}\" NOT IN ( SELECT \"${arg_primary_key_column%%:*}\" FROM \"${import_table_name}\" );" \
+)
+fi
+
+for q in "${arg_after_queries[@]}"; do
+  runq_args+=("${q}")
+done
+
+runq_args+=(
+  "COMMIT TRANSACTION;"
+  "SELECT COUNT(1) FROM \"${import_table_name}\";" # count up the number of imported records
+)
+
+cmdout="$(mktemp "${TMPDIR}/cmdout.XXXXXXXX")"
+if runq "${database_file}" "${runq_args[@]}" 1>"${cmdout}"; then
+  num_records="$(cat "${cmdout}")"
+  if [[ -z "${DRY_RUN:-}" ]]; then
+    info "${0##*/}: imported ${num_records:-0} record(s) into '${table_name}' table."
+  else
+    info "${0##*/}: imported ${num_records:-0} record(s) into '${table_name}' table (dry-run)."
+  fi
+else
+  { echo "${0##*/}: failed to insert records into ${table_name}"
+    echo
+    echo "SQL:"
+    for arg in "${runq_args[@]}"; do echo "${arg}"; done
+    echo
+    echo "CSV:"
+    head "${csv_file}"
+    echo
+  } | error
+  exit 1
+fi

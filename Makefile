@@ -1,4 +1,4 @@
-.PHONY: all build clean install
+.PHONY: all build clean install test
 
 PREFIX ?= /usr/local
 
@@ -10,3 +10,6 @@ clean:
 
 install:
 	false
+
+test:
+	./test.sh
