@@ -1,0 +1,4 @@
+*.sqlite
+*.swo
+*.swp
+/tmp
