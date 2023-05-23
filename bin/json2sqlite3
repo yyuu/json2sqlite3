@@ -64,11 +64,9 @@ ppq() {
   shift 1 # skipping database file
   local arg # expecting SQL statements to follow...
   for arg in "$@"; do
-    local lines
-    mapfile -t lines <<< "${arg}"
     local continued_p=
     local line
-    for line in "${lines[@]}"; do
+    while IFS='' read -r line; do
       if [[ -z "${continued_p:-}" ]]; then
         debug "sqlite3> ${line:-}"
         if [[ "${line:-}" == "."* ]] || [[ "${line:-}" == *";" ]]; then
@@ -79,7 +77,7 @@ ppq() {
       else
         debug "    ...> ${line:-}"
       fi
-    done
+    done <<< "${arg}"
   done
 }
 
@@ -197,17 +195,15 @@ build_create_table_statement() {
   else
     stmt="CREATE TEMPORARY TABLE \"${table_name}\" ("
   fi
-  local _columns
-  mapfile -t _columns < <(jq --raw-output 'map("\(.name):\(.type)")[]' <<< "${create_table_specs}")
   local _column
-  for _column in "${_columns[@]}"; do
+  while IFS='' read -r _column; do
     validate_ident "${_column%%:*}"
     if [[ "${_column%%:*}" == "${pk:-}" ]]; then
       column_type+=" PRIMARY KEY"
     fi
     stmt+=$'\n'
     stmt+="  \"${_column%%:*}\" ${_column#*:},"
-  done
+  done < <(jq --raw-output 'map("\(.name):\(.type)")[]' <<< "${create_table_specs}")
   stmt="${stmt%,}"
   stmt+=$'\n)'
   echo "${stmt};"
@@ -232,21 +228,19 @@ build_insert_into_table_from_table_statement() {
   else
     stmt="INSERT INTO \"${table_name}\" ("
   fi
-  local _columns
-  mapfile -t _columns < <(jq --raw-output 'map("\(.name):\(.type)")[]' <<< "${table_column_specs}")
   local _column
-  for _column in "${_columns[@]}"; do
+  while IFS='' read -r _column; do
     validate_ident "${_column%%:*}"
     stmt+=$'\n'
     stmt+="  \"${_column%%:*}\","
-  done
+  done < <(jq --raw-output 'map("\(.name):\(.type)")[]' <<< "${table_column_specs}")
   stmt="${stmt%,}"
   stmt+=$'\n) SELECT'
-  for _column in "${_columns[@]}"; do
+  while IFS='' read -r _column; do
     validate_ident "${_column%%:*}"
     stmt+=$'\n'
     stmt+="  \"${_column%%:*}\","
-  done
+  done < <(jq --raw-output 'map("\(.name):\(.type)")[]' <<< "${table_column_specs}")
   stmt="${stmt%,}"
   stmt+=$'\nFROM\n'
   stmt+="  \"${source_table_name}\";"
@@ -679,9 +673,11 @@ runq_args=(
   "BEGIN TRANSACTION;"
 )
 
-for q in "${arg_before_queries[@]}"; do
-  runq_args+=("${q}")
-done
+if [[ ${#arg_before_queries[@]} -gt 0 ]]; then
+  for q in "${arg_before_queries[@]}"; do
+    runq_args+=("${q}")
+  done
+fi
 
 if [[ -n "${arg_preserve_created:-}" ]]; then
   if [[ -z "${arg_primary_key_column:-}" ]] || [[ -z "${arg_created_column:-}" ]]; then
@@ -720,9 +716,11 @@ WHERE
 )
 fi
 
-for q in "${arg_after_queries[@]}"; do
-  runq_args+=("${q}")
-done
+if [[ ${#arg_after_queries[*]} -gt 0 ]]; then
+  for q in "${arg_after_queries[@]}"; do
+    runq_args+=("${q}")
+  done
+fi
 
 runq_args+=(
   "COMMIT TRANSACTION;"

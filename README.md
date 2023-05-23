@@ -4,7 +4,7 @@ A utility script to convert JSON objects into SQLite3 records.
 
 # Setup
 
-* `bash (>= 4)`
+* `bash`
 * `jq`
 * `sqlite3 (>= 3.38.0)`
 
