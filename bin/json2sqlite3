@@ -491,7 +491,7 @@ while [[ $# -gt 0 ]]; do
     if [[ -z "${arg_output:-}" ]]; then
       arg_output="${1:-}"
     else
-      echo "${0##*/}: error: unrecognized argument: ${1:-}" 1>&2
+      error "${0##*/}: error: unrecognized argument: ${1:-}"
       exit 1
     fi
     ;;
@@ -499,18 +499,22 @@ while [[ $# -gt 0 ]]; do
   shift 1
 done
 
-database_file="${arg_output%:*}"
-table_name="${arg_output##*:}"
-
-if [[ -z "${database_file:-}" ]]; then
-  echo "${0##*/}: SQLite3 database file was not given" 1>&2
+if ! command -v jq 1>/dev/null 2>&1; then
+  error "${0##*/}: jq is not available"
   exit 1
 fi
 
-if [[ -z "${table_name:-}" ]]; then
-  echo "${0##*/}: SQLite3 table name was not given" 1>&2
+if ! command -v sqlite3 1>/dev/null 2>&1; then
+  error "${0##*/}: sqlite3 is not available"
+  exit 1
+fi
+
+if [[ "${arg_output:-}" != *":"* ]]; then
+  error "${0##*/}: SQLite3 database and table were not given"
   exit 1
 else
+  database_file="${arg_output%:*}"
+  table_name="${arg_output##*:}"
   validate_ident "${table_name}"
 fi
 
