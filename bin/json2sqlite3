@@ -5,7 +5,7 @@ set -euo pipefail
 [[ -z "${DEBUG:-}" ]] || set -x
 
 TMPDIR="$(mktemp -d)"
-VERSION="@@JSON2SQLITE3_VERSION@@"
+VERSION="0.20230523.1"
 VERBOSITY=2
 
 on_exit() {
@@ -524,7 +524,6 @@ json_file="$(mktemp "${TMPDIR}/json_file.XXXXXXXX")"
 cat > "${json_file}"
 
 # managing table schema...
-static_column_specs="$(detect_column_specs_from_args "${arg_column_specs[@]}")"
 if runq_safe "${database_file}" "SELECT 1 FROM \"${table_name}\" LIMIT 1;" 1>/dev/null 2>&1; then
   current_column_specs="$(detect_column_specs_from_table "${database_file}" "${table_name}")"
   if [[ ${#arg_generic_column_specs[*]} -eq 0 ]]; then
@@ -541,7 +540,7 @@ if runq_safe "${database_file}" "SELECT 1 FROM \"${table_name}\" LIMIT 1;" 1>/de
       fi
     fi
   else
-    if compare_column_specs "${current_column_specs}" "${static_column_specs}"; then
+    if compare_column_specs "${current_column_specs}" "$(detect_column_specs_from_args "${arg_column_specs[@]}")"; then
       debug "${0##*/}: existing table '${table_name}' has schema compatible with specified columns." 1>&2
     else
       if [[ -z "${arg_alter_table:-}" ]]; then
@@ -549,7 +548,7 @@ if runq_safe "${database_file}" "SELECT 1 FROM \"${table_name}\" LIMIT 1;" 1>/de
         exit 1
       else
         warn "${0##*/}: existing table '${table_name}' has schema drift with specified columns. will alter table..." 1>&2
-        reconcile_table --pk="${pk_column_name:-}" "${database_file}" "${table_name}" "${current_column_specs}" "${static_column_specs}"
+        reconcile_table --pk="${pk_column_name:-}" "${database_file}" "${table_name}" "${current_column_specs}" "$(detect_column_specs_from_args "${arg_column_specs[@]}")"
       fi
     fi
   fi
@@ -564,7 +563,7 @@ else
       create_table --pk="${pk_column_name:-}" "${database_file}" "${table_name}" "${detected_column_specs}"
     else
       warn "${0##*/}: creating new table '${table_name}' with specified columns." 1>&2
-      create_table --pk="${pk_column_name:-}" "${database_file}" "${table_name}" "${static_column_specs}"
+      create_table --pk="${pk_column_name:-}" "${database_file}" "${table_name}" "$(detect_column_specs_from_args "${arg_column_specs[@]}")"
     fi
   fi
 fi

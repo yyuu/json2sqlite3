@@ -1,15 +1,18 @@
 .PHONY: all build clean install test
 
 PREFIX ?= /usr/local
+BIN_DIR ?= $(PREFIX)/bin
 
 all: build
 
-build:
+build: test
 
 clean:
 
 install:
-	false
+	install -d -m 0755 $(BIN_DIR)
+	install -m 0755 $(wildcard $(CURDIR)/bin/*) $(BIN_DIR)/
 
 test:
-	./test.sh
+	shellcheck $(wildcard $(CURDIR)/bin/*)
+	bats tests
