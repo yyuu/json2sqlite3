@@ -120,7 +120,7 @@ compare_column_specs() {
 
 detect_column_specs_from_args() {
   local arg
-  local cid=0
+  local cid=1
   local specs='[]'
   for arg in "$@"; do
     local _name="${arg%%:*}"
@@ -247,6 +247,79 @@ build_insert_into_table_from_table_statement() {
   echo "${stmt}"
 }
 
+reconcile_column_specs() {
+  local spec1="$1"
+  local spec2="$2"
+  local spec3="$3"
+  local s1
+  local s2
+  local s3
+  s1="$(mktemp "${TMPDIR}/s1.XXXXXXXX")"
+  s2="$(mktemp "${TMPDIR}/s2.XXXXXXXX")"
+  s3="$(mktemp "${TMPDIR}/s3.XXXXXXXX")"
+  jq --raw-output 'map([.cid, .name, .type])[] | @csv' <<< "${spec1}" > "${s1}"
+  jq --raw-output 'map([.cid, .name, .type])[] | @csv' <<< "${spec2}" > "${s2}"
+  jq --raw-output 'map([.cid, .name, .type])[] | @csv' <<< "${spec3}" > "${s3}"
+  runq_safe /dev/null \
+    "CREATE TEMPORARY TABLE s1 (cid INTEGER, name TEXT, type TEXT);" \
+    "CREATE TEMPORARY TABLE s2 (cid INTEGER, name TEXT, type TEXT);" \
+    "CREATE TEMPORARY TABLE s3 (cid INTEGER, name TEXT, type TEXT);" \
+    ".mode csv" \
+    ".import '${s1}' s1" \
+    ".import '${s2}' s2" \
+    ".import '${s3}' s3" \
+    ".mode ascii" \
+    "WITH names AS (
+      SELECT
+        name
+      FROM
+        s1
+      UNION SELECT
+        name
+      FROM
+        s2
+      UNION SELECT
+        name
+      FROM
+        s3
+    ), s0 AS (
+      SELECT
+        ( CASE
+          WHEN s1.cid IS NOT NULL THEN s1.cid
+          WHEN s2.cid IS NOT NULL THEN s2.cid
+          ELSE s3.cid
+          END ) AS cid,
+        names.name,
+        ( CASE
+          WHEN s1.type IS NOT NULL THEN s1.type
+          WHEN s2.type IS NOT NULL THEN s2.type
+          ELSE s3.type
+          END ) AS type
+      FROM
+        names
+      LEFT JOIN
+        s1
+          ON names.name = s1.name
+      LEFT JOIN
+        s2
+          ON names.name = s2.name
+      LEFT JOIN
+        s3
+          ON names.name = s3.name
+      ORDER BY
+        cid
+    ) SELECT
+      json_group_array(
+        json_object(
+          'cid', cid,
+          'name', name,
+          'type', type
+        )
+      )
+    FROM
+      s0;"
+}
+
 reconcile_table() {
   local pk
   while [[ $# -gt 0 ]]; do
@@ -258,59 +331,9 @@ reconcile_table() {
   done
   local database_file="$1"
   local table_name="$2"
-  local current_column_specs="$3"
-  local detected_column_specs="$4"
-  local xs
-  local ys
-  xs="$(mktemp "${TMPDIR}/xs.XXXXXXXX")"
-  ys="$(mktemp "${TMPDIR}/ys.XXXXXXXX")"
-  jq --raw-output 'map([.cid, .name, .type])[] | @csv' <<< "${current_column_specs}" > "${xs}"
-  jq --raw-output 'map([.cid, .name, .type])[] | @csv' <<< "${detected_column_specs}" > "${ys}"
-  reconciled_column_specs="$(runq_safe "${database_file}" \
-    "CREATE TEMPORARY TABLE xs (cid INTEGER PRIMARY KEY, name TEXT, type TEXT);" \
-    "CREATE TEMPORARY TABLE ys (cid INTEGER PRIMARY KEY, name TEXT, type TEXT);" \
-    ".mode csv" \
-    ".import '${xs}' xs" \
-    ".import '${ys}' ys" \
-    ".mode ascii" \
-    "WITH zs AS (
-      SELECT
-        name,
-        type
-      FROM
-        xs
-      UNION SELECT
-        name,
-        type
-      FROM ys
-    ) SELECT
-      json_group_array(
-        json_object(
-          'cid', (
-            CASE
-            WHEN xs.cid IS NULL THEN ys.cid+(SELECT COUNT(1) FROM xs)
-            ELSE xs.cid
-            END
-          ),
-          'name', zs.name,
-          'type', zs.type
-        )
-      )
-    FROM
-      zs
-    LEFT JOIN
-      xs
-        ON zs.name = xs.name
-    LEFT JOIN
-      ys
-        ON zs.name = ys.name
-    ORDER BY (
-      CASE
-      WHEN xs.cid IS NULL THEN ys.cid+(SELECT COUNT(1) FROM xs)
-      ELSE xs.cid
-      END
-    );" \
-  )"
+  local old_column_specs="$3"
+  local new_column_specs="$4"
+
   local backup_table_name
   backup_table_name="_${table_name}_backup$(date '+%s')"
   runq_args=(
@@ -318,8 +341,8 @@ reconcile_table() {
     "DROP TABLE IF EXISTS \"${backup_table_name}\";"
     "ALTER TABLE \"${table_name}\" RENAME TO \"${backup_table_name}\";"
   )
-  runq_args+=("$(build_create_table_statement --pk="${pk:-}" "${database_file}" "${table_name}" "${reconciled_column_specs}")")
-  runq_args+=("$(build_insert_into_table_from_table_statement --insert-or-replace "${database_file}" "${table_name}" "${backup_table_name}" "${reconciled_column_specs}")")
+  runq_args+=("$(build_create_table_statement --pk="${pk:-}" "${database_file}" "${table_name}" "${new_column_specs}")")
+  runq_args+=("$(build_insert_into_table_from_table_statement --insert-or-replace "${database_file}" "${table_name}" "${backup_table_name}" "${old_column_specs}")")
   # TODO: DROP TABLE IF EXISTS "${backup_table_name}"...
   runq_args+=("COMMIT TRANSACTION;")
   runq "${database_file}" "${runq_args[@]}"
@@ -347,7 +370,6 @@ arg_column_specs=() # contains columns including special columns e.g. primary ke
 arg_create_table=1
 arg_created_column=
 arg_deleted_column=
-arg_generic_column_specs=() # contains generic columns only
 arg_insert_if_empty=
 arg_output=
 arg_preserve_created=
@@ -420,7 +442,6 @@ while [[ $# -gt 0 ]]; do
     if [[ "${arg_generic_column:-}" != *":"* ]]; then
       arg_generic_column+=":JSON"
     fi
-    arg_generic_column_specs+=("${generic_column}")
     arg_column_specs+=("${generic_column}")
     ;;
   "--help" | "-h" )
@@ -526,30 +547,22 @@ cat > "${json_file}"
 # managing table schema...
 if runq_safe "${database_file}" "SELECT 1 FROM \"${table_name}\" LIMIT 1;" 1>/dev/null 2>&1; then
   current_column_specs="$(detect_column_specs_from_table "${database_file}" "${table_name}")"
-  if [[ ${#arg_generic_column_specs[*]} -eq 0 ]]; then
-    detected_column_specs="$(detect_column_specs_from_json "${json_file}")"
-    if compare_column_specs "${current_column_specs}" "${detected_column_specs}"; then
-      debug "${0##*/}: existing table '${table_name}' has schema compatible with columns detected in importing data." 1>&2
-    else
-      if [[ -z "${arg_alter_table:-}" ]]; then
-        error "${0##*/}: existing table '${table_name}' has schema drift with columns detected in importing data. use --alter-table option to alter table." 1>&2
-        exit 1
-      else
-        warn "${0##*/}: existing table '${table_name}' has schema drift with columns detected in importing data. will alter table..." 1>&2
-        reconcile_table --pk="${pk_column_name:-}" "${database_file}" "${table_name}" "${current_column_specs}" "${detected_column_specs}"
-      fi
-    fi
+  if [[ ${#arg_column_specs[*]} -eq 0 ]]; then
+    specified_column_specs='[]'
   else
-    if compare_column_specs "${current_column_specs}" "$(detect_column_specs_from_args "${arg_column_specs[@]}")"; then
-      debug "${0##*/}: existing table '${table_name}' has schema compatible with specified columns." 1>&2
+    specified_column_specs="$(detect_column_specs_from_args "${arg_column_specs[@]}")"
+  fi
+  detected_column_specs="$(detect_column_specs_from_json "${json_file}")"
+  reconciled_column_specs="$(reconcile_column_specs "${current_column_specs}" "${specified_column_specs}" "${detected_column_specs}")"
+  if compare_column_specs "${current_column_specs}" "${reconciled_column_specs}"; then
+    debug "${0##*/}: existing table '${table_name}' has schema compatible with columns detected in importing data." 1>&2
+  else
+    if [[ -z "${arg_alter_table:-}" ]]; then
+      error "${0##*/}: existing table '${table_name}' has schema drift with columns detected in importing data. use --alter-table option to alter table." 1>&2
+      exit 1
     else
-      if [[ -z "${arg_alter_table:-}" ]]; then
-        error "${0##*/}: existing table '${table_name}' has schema drift with specified columns. use --alter-table option to alter table." 1>&2
-        exit 1
-      else
-        warn "${0##*/}: existing table '${table_name}' has schema drift with specified columns. will alter table..." 1>&2
-        reconcile_table --pk="${pk_column_name:-}" "${database_file}" "${table_name}" "${current_column_specs}" "$(detect_column_specs_from_args "${arg_column_specs[@]}")"
-      fi
+      warn "${0##*/}: existing table '${table_name}' has schema drift with columns detected in importing data. will alter table..." 1>&2
+      reconcile_table --pk="${pk_column_name:-}" "${database_file}" "${table_name}" "${current_column_specs}" "${reconciled_column_specs}"
     fi
   fi
 else
@@ -557,14 +570,15 @@ else
     error "${0##*/}: table '${table_name}' does not exist. use --create-table option to create table." 1>&2
     exit 1
   else
-    if [[ ${#arg_generic_column_specs[*]} -eq 0 ]]; then
-      warn "${0##*/}: creating new table '${table_name}' with columns detected in importing data." 1>&2
-      detected_column_specs="$(detect_column_specs_from_json "${json_file}")"
-      create_table --pk="${pk_column_name:-}" "${database_file}" "${table_name}" "${detected_column_specs}"
+    if [[ ${#arg_column_specs[*]} -eq 0 ]]; then
+      specified_column_specs='[]'
     else
-      warn "${0##*/}: creating new table '${table_name}' with specified columns." 1>&2
-      create_table --pk="${pk_column_name:-}" "${database_file}" "${table_name}" "$(detect_column_specs_from_args "${arg_column_specs[@]}")"
+      specified_column_specs="$(detect_column_specs_from_args "${arg_column_specs[@]}")"
     fi
+    detected_column_specs="$(detect_column_specs_from_json "${json_file}")"
+    reconciled_column_specs="$(reconcile_column_specs '[]' "${specified_column_specs}" "${detected_column_specs}")"
+    warn "${0##*/}: creating new table '${table_name}'." 1>&2
+    create_table --pk="${pk_column_name:-}" "${database_file}" "${table_name}" "${reconciled_column_specs}"
   fi
 fi
 
