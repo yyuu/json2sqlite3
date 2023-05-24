@@ -304,8 +304,8 @@ reconcile_column_specs3() {
       SELECT
         ( CASE
           WHEN s1.cid IS NOT NULL THEN s1.cid
-          WHEN s2.cid IS NOT NULL THEN s2.cid
-          ELSE s3.cid
+          WHEN s2.cid IS NOT NULL THEN s2.cid + ( SELECT COUNT(1) FROM s1 )
+          ELSE s3.cid + ( SELECT COUNT(1) FROM s1 ) + ( SELECT COUNT(1) FROM s2 )
           END ) AS cid,
         names.name,
         ( CASE
@@ -490,7 +490,7 @@ while [[ $# -gt 0 ]]; do
     if [[ "${arg_generic_column:-}" != *":"* ]]; then
       arg_generic_column+=":JSON"
     fi
-    arg_column_specs+=("${generic_column}")
+    arg_column_specs+=("${arg_generic_column}")
     ;;
   "--help" | "-h" )
     echo "${0##*/} [OPTIONS] DATABASE_FILE:TABLE_NAME < JSON"
