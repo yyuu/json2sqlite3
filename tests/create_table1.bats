@@ -3,8 +3,9 @@
 load test_helper
 
 @test "import JSON with creating new table" {
-  table_name="$(generate_table_name)"
-  run json2sqlite3 "${DBFILE}:${table_name}" < <(
+  database_file="$(generate_database_file "${BATS_TEST_FILENAME##*/}")"
+  table_name="$(generate_table_name "${BATS_TEST_FILENAME##*/}")"
+  run json2sqlite3 "${database_file}:${table_name}" < <(
     jq --compact-output --null-input '[
       {"_Id": 1, "foo":"FOO1", "bar":"BAR1"},
       {"_Id": 2, "foo":"FOO2", "bar":"BAR2"},
@@ -12,7 +13,7 @@ load test_helper
     ]'
   )
   assert_success
-  run sqlite3 "${DBFILE}" <<SQL
+  run sqlite3 "${database_file}" <<SQL
 SELECT * FROM "${table_name}";
 SQL
   assert_output <<EOS

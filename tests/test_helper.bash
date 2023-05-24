@@ -9,15 +9,21 @@ export PATH
 
 setup() {
   mkdir -p "${BATS_TEST_DIRNAME}/tmp"
-  export DBFILE="${BATS_TEST_DIRNAME}/tmp/test_$(date '+%s').sqlite"
 }
 
 teardown() {
-  rm -fr "${BATS_TEST_DIRNAME}/tmp"
+# rm -fr "${BATS_TEST_DIRNAME}/tmp"
+  :
 }
 
 generate_table_name() {
-  echo "tbl_$(openssl rand -hex 8)"
+  local base="${1:-tbl}"
+  echo "__test__${base//[^0-9A-Z_a-z]/_}_$(openssl rand -hex 8)"
+}
+
+generate_database_file() {
+  local base="${1:-db}"
+  echo "${BATS_TEST_DIRNAME}/tmp/__test__${base//[^0-9A-Z_a-z]/_}_$(openssl rand -hex 8).sqlite"
 }
 
 flunk() {
