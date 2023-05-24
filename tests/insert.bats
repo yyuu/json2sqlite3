@@ -8,7 +8,7 @@ load test_helper
   sqlite3 "${database_file}" <<SQL
 CREATE TABLE "${table_name}" (_Id INTEGER PRIMARY KEY, foo TEXT, bar TEXT, _CreatedAt INTEGER, _UpdatedAt INTEGER, _DeletedAt INTEGER);
 SQL
-  run json2sqlite3 --primary-key-column=_Id --created-column=_CreatedAt --updated-column=_UpdatedAt --deleted-column=_DeletedAt --insert-if-empty=13 "${database_file}:${table_name}" < <(
+  run json2sqlite3 --primary-key-column=_Id --created-column=_CreatedAt --updated-column=_UpdatedAt --deleted-column=_DeletedAt --insert-if-empty=13 "${database_file}" "${table_name}" < <(
     jq --compact-output --null-input '[
     ]'
   )
@@ -30,7 +30,7 @@ CREATE TABLE "${table_name}" (_Id INTEGER PRIMARY KEY, foo TEXT, bar TEXT, _Crea
 INSERT INTO "${table_name}" (_Id, foo, _CreatedAt, _UpdatedAt, _DeletedAt) VALUES (1, 'FOO1', 1234567890, 1234567893, -1);
 INSERT INTO "${table_name}" (_Id, foo, _CreatedAt, _UpdatedAt, _DeletedAt) VALUES (2, 'FOO2', -1, -1, -1);
 SQL
-  run json2sqlite3 --primary-key-column=_Id --created-column=_CreatedAt --updated-column=_UpdatedAt --deleted-column=_DeletedAt "${database_file}:${table_name}" < <(
+  run json2sqlite3 --primary-key-column=_Id --created-column=_CreatedAt --updated-column=_UpdatedAt --deleted-column=_DeletedAt "${database_file}" "${table_name}" < <(
     jq --compact-output --null-input '[
       {"_Id": 2, "foo": "FOO2", "bar": "BAR2", "_CreatedAt":1234567891, "_UpdatedAt": 1234567894, "_DeletedAt": 1234567897},
       {"_Id": 3, "foo": "FOO3", "bar": "BAR3", "_CreatedAt":1234567892, "_UpdatedAt": 1234567895, "_DeletedAt": -1}
@@ -57,7 +57,7 @@ INSERT INTO "${table_name}" (_Id, foo, _CreatedAt, _UpdatedAt, _DeletedAt) VALUE
 INSERT INTO "${table_name}" (_Id, foo, _CreatedAt, _UpdatedAt, _DeletedAt) VALUES (2, 'FOO2', 1234567891, 1234567894, -1);
 INSERT INTO "${table_name}" (_Id, foo, _CreatedAt, _UpdatedAt, _DeletedAt) VALUES (3, 'FOO3', 1234567892, 1234567895, -1);
 SQL
-  run json2sqlite3 --primary-key-column=_Id --created-column=_CreatedAt --updated-column=_UpdatedAt --deleted-column=_DeletedAt --preserve-created "${database_file}:${table_name}" < <(
+  run json2sqlite3 --primary-key-column=_Id --created-column=_CreatedAt --updated-column=_UpdatedAt --deleted-column=_DeletedAt --preserve-created "${database_file}" "${table_name}" < <(
     jq --compact-output --null-input '[
       {"_Id": 1, "foo": "FOO1.1", "bar": "BAR1.1", "_CreatedAt":1334567890, "_UpdatedAt": 1334567893, "_DeletedAt": -1},
       {"_Id": 2, "foo": "FOO2.1", "bar": "BAR2.1", "_CreatedAt":1334567891, "_UpdatedAt": 1334567894, "_DeletedAt": -1},
@@ -85,7 +85,7 @@ INSERT INTO "${table_name}" (_Id, foo, _CreatedAt, _UpdatedAt, _DeletedAt) VALUE
 INSERT INTO "${table_name}" (_Id, foo, _CreatedAt, _UpdatedAt, _DeletedAt) VALUES (2, 'FOO2', 1234567891, 1234567894, -1);
 INSERT INTO "${table_name}" (_Id, foo, _CreatedAt, _UpdatedAt, _DeletedAt) VALUES (3, 'FOO3', 1234567892, 1234567895, -1);
 SQL
-  run json2sqlite3 --primary-key-column=_Id --created-column=_CreatedAt --updated-column=_UpdatedAt --deleted-column=_DeletedAt --soft-delete "${database_file}:${table_name}" < <(
+  run json2sqlite3 --primary-key-column=_Id --created-column=_CreatedAt --updated-column=_UpdatedAt --deleted-column=_DeletedAt --soft-delete "${database_file}" "${table_name}" < <(
     jq --compact-output --null-input '[
       {"_Id": 2, "foo": "FOO2.1", "bar": "BAR2.1", "_CreatedAt":1334567891, "_UpdatedAt": 1334567894, "_DeletedAt": -1}
     ]'

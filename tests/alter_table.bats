@@ -8,7 +8,7 @@ load test_helper
   sqlite3 "${database_file}" <<SQL
 CREATE TABLE "${table_name}" (_Id INTEGER);
 SQL
-  run json2sqlite3 "${database_file}:${table_name}" < <(
+  run json2sqlite3 "${database_file}" "${table_name}" < <(
     jq --compact-output --null-input '[
       {"_Id": 1, "foo": "FOO1", "bar": "BAR1"},
       {"_Id": 2, "foo": "FOO2", "bar": "BAR2"},
@@ -33,7 +33,7 @@ EOS
   sqlite3 "${database_file}" <<SQL
 CREATE TABLE "${table_name}" (_Id INTEGER PRIMARY KEY, foo TEXT);
 SQL
-  run json2sqlite3 --primary-key-column=_Id "${database_file}:${table_name}" < <(
+  run json2sqlite3 --primary-key-column=_Id "${database_file}" "${table_name}" < <(
     jq --compact-output --null-input '[
       {"_Id": 1, "foo": "FOO1", "bar": "BAR1"},
       {"_Id": 2, "foo": "FOO2", "bar": "BAR2"},
@@ -57,7 +57,7 @@ EOS
   sqlite3 "${database_file}" <<SQL
 CREATE TABLE "${table_name}" (_Id INTEGER PRIMARY KEY, foo TEXT, bar TEXT);
 SQL
-  run json2sqlite3 --primary-key-column=_Id --created-column=_CreatedAt --updated-column=_UpdatedAt --deleted-column=_DeletedAt "${database_file}:${table_name}" < <(
+  run json2sqlite3 --primary-key-column=_Id --created-column=_CreatedAt --updated-column=_UpdatedAt --deleted-column=_DeletedAt "${database_file}" "${table_name}" < <(
     jq --compact-output --null-input '[
       {"_Id": 1, "foo": "FOO1", "bar": "BAR1", "_CreatedAt": 1234567890, "_UpdatedAt": 1234567893, "_DeletedAt": 1234567896},
       {"_Id": 2, "foo": "FOO2", "bar": "BAR2", "_CreatedAt": 1234567891, "_UpdatedAt": 1234567894, "_DeletedAt": 1234567897},

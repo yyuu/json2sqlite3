@@ -14,6 +14,32 @@ on_exit() {
 
 trap on_exit EXIT
 
+usage() {
+  echo "Usage: ${0##*/} [OPTIONS] DATABASE_FILE TABLE_NAME [JSON_FILE]"
+  echo
+  case_pattern_tag=" ) # usage: "
+  # try to extract `case` command patterns from given shell script
+  case_patterns=()
+  while IFS='' read -r line; do case_patterns+=("$line"); done < <(sed -e '/^[[:space:]]*#/d' "${BASH_SOURCE[0]}" | sed -n -e '/^while \[* \$# -gt 0 \]*; do$/,/^done$/p' | grep -F -h "${case_pattern_tag}")
+
+  if [[ ${#case_patterns[*]} -gt 0 ]]; then
+    echo "Options:"
+    for case_pattern in "${case_patterns[@]+"${case_patterns[@]}"}"; do
+      # extract `case` pattern expressions
+      args_patterns="$(echo "${case_pattern%%"${case_pattern_tag}"*}" | tr -d '"' | tr -d "'" | tr -d ' ' | sed -e 's/|/, /g')"
+      # extract help message prepared as comment
+      args_message="${case_pattern#*"${case_pattern_tag}"}"
+      if [[ "${#args_patterns}" -lt 22 ]]; then
+        printf "  %-20s  %s\n" "${args_patterns:-}" "${args_message:-}"
+      else
+        printf "  %-s\n" "${args_patterns:-}"
+        printf "                        %s\n" "${args_message:-}"
+      fi
+    done
+    echo
+  fi
+}
+
 error() {
   if [[ -n "${VERBOSE:-}" ]] || [[ "${VERBOSITY:-0}" -ge 0 ]]; then
     { if [[ -t 2 ]]; then printf '\033[1;31m'; fi
@@ -54,7 +80,7 @@ validate_ident() {
   local ident
   for ident in "$@"; do
     if [[ ! "${ident:-}" =~ ^[A-Z_a-z][0-9A-Z_a-z]*$ ]]; then
-      warn "${0##*/}: invalid identifier for SQLite3 tables/columns: ${ident:-}"
+      warn "${0##*/}: invalid identifier for sqlite3 table/column name: ${ident:-}"
       return 1
     fi
   done
@@ -410,12 +436,13 @@ arg_before_queries=()
 arg_column_specs=() # contains columns including special columns e.g. primary key, created/updated/deleted
 arg_create_table=1
 arg_created_column=
+arg_database_file=
 arg_deleted_column=
 arg_insert_if_empty=
-arg_output=
 arg_preserve_created=
 arg_primary_key_column=
 arg_soft_delete=
+arg_table_name=
 arg_updated_column=
 
 while [[ $# -gt 0 ]]; do
@@ -431,7 +458,7 @@ while [[ $# -gt 0 ]]; do
       shift 1
     fi
     ;;
-  "--alter-table" | "--no-alter-table" )
+  "--alter-table" | "--no-alter-table" ) # usage: enable/disable ALTER TABLE operation (default: enabled)
     if [[ "$1" == "--no-"* ]]; then
       arg_alter_table=
     else
@@ -446,14 +473,14 @@ while [[ $# -gt 0 ]]; do
       shift 1
     fi
     ;;
-  "--create-table" | "--no-create-table" )
+  "--create-table" | "--no-create-table" ) # usage: enable/disable CREATE TABLE operation (default: enabled)
     if [[ "$1" == "--no-"* ]]; then
       arg_create_table=
     else
       arg_create_table=1
     fi
     ;;
-  "--created-column" | "--created-column="* )
+  "--created-column" | "--created-column="* ) # usage: specify a column name to contain creation timestamp. you also can specify column type (e.g. created_at:INTEGER)
     if [[ "$1" == *"="* ]]; then
       arg_created_column="${1#*=}"
     else
@@ -465,7 +492,7 @@ while [[ $# -gt 0 ]]; do
     fi
     arg_column_specs+=("${arg_created_column}")
     ;;
-  "--deleted-column" | "--deleted-column="* )
+  "--deleted-column" | "--deleted-column="* ) # usage: specify a column name to contain deletion timestamp. you also can specify column type (e.g. deleted_at:INTEGER)
     if [[ "$1" == *"="* ]]; then
       arg_deleted_column="${1#*=}"
     else
@@ -477,10 +504,10 @@ while [[ $# -gt 0 ]]; do
     fi
     arg_column_specs+=("${arg_deleted_column}")
     ;;
-  "--dry-run" )
+  "--dry-run" ) # usage: enable dry-run mode
     DRY_RUN=1
     ;;
-  "--generic-column" | "--generic-column="* )
+  "--generic-column" | "--generic-column="* ) # usage: specify generic column. you also can specify column type (e.g. foo:TEXT)
     if [[ "$1" == *"="* ]]; then
       arg_generic_column="${1#*=}"
     else
@@ -492,8 +519,8 @@ while [[ $# -gt 0 ]]; do
     fi
     arg_column_specs+=("${arg_generic_column}")
     ;;
-  "--help" | "-h" )
-    echo "${0##*/} [OPTIONS] DATABASE_FILE:TABLE_NAME < JSON"
+  "--help" | "-h" ) # usage: show this message
+    usage
     exit 0
     ;;
   "--insert-if-empty" | "--insert-if-empty="* )
@@ -504,7 +531,7 @@ while [[ $# -gt 0 ]]; do
       shift 1
     fi
     ;;
-  "--primary-key-column" | "--primary-key-column="* )
+  "--primary-key-column" | "--primary-key-column="* ) # usage: specify a column name to be used as primary key. you also can specify column type (e.g. id:INTEGER)
     if [[ "$1" == *"="* ]]; then
       arg_primary_key_column="${1#*=}"
     else
@@ -530,7 +557,7 @@ while [[ $# -gt 0 ]]; do
       arg_soft_delete=1
     fi
     ;;
-  "--updated-column" | "--updated-column="* )
+  "--updated-column" | "--updated-column="* ) # usage: specify a column name to contain update timestamp. you also can specify column type (e.g. updated_at:INTEGER)
     if [[ "$1" == *"="* ]]; then
       arg_updated_column="${1#*=}"
     else
@@ -542,20 +569,21 @@ while [[ $# -gt 0 ]]; do
     fi
     arg_column_specs+=("${arg_updated_column}")
     ;;
-  "--version" )
+  "--version" ) # usage: display version information
     echo "${0##*/} ${VERSION:-n/a}"
     exit 0
     ;;
-  "--verbose" | "-v" )
+  "--verbose" | "-v" ) # usage: enable verbose mode. can be specified multiple times to increase verbosity
     VERBOSE=1
     VERBOSITY="$(( VERBOSITY + 1 ))"
     ;;
   * )
-    if [[ -z "${arg_output:-}" ]]; then
-      arg_output="${1:-}"
+    if [[ -z "${arg_database_file:-}" ]]; then
+      arg_database_file="${1:-}"
+    elif [[ -z "${arg_table_name:-}" ]]; then
+      arg_table_name="${1:-}"
     else
-      error "${0##*/}: error: unrecognized argument: ${1:-}"
-      exit 1
+      break
     fi
     ;;
   esac
@@ -572,13 +600,16 @@ if ! command -v sqlite3 1>/dev/null 2>&1; then
   exit 1
 fi
 
-if [[ "${arg_output:-}" != *":"* ]]; then
-  error "${0##*/}: SQLite3 database and table were not given"
+if [[ -z "${arg_database_file:-}" ]]; then
+  usage
+  exit 1
+fi
+
+if [[ -z "${arg_table_name:-}" ]]; then
+  usage
   exit 1
 else
-  database_file="${arg_output%:*}"
-  table_name="${arg_output##*:}"
-  validate_ident "${table_name}"
+  validate_ident "${arg_table_name}"
 fi
 
 if [[ -z "${arg_primary_key_column:-}" ]]; then
@@ -588,9 +619,9 @@ else
   validate_ident "${pk_column_name}"
 fi
 
-# read from standard input
+# read json from remainder of command line arguments, or standard input
 json_file="$(mktemp "${TMPDIR}/json_file.XXXXXXXX")"
-cat > "${json_file}"
+cat "$@" > "${json_file}"
 
 # fail early if the input data is not well-formed
 json_file_length=0
@@ -610,11 +641,11 @@ fi
 
 # managing table schema...
 table_description=""
-if sqlite3 "${database_file}" "SELECT 1 FROM \"${table_name}\" LIMIT 1;" 1>/dev/null 2>&1; then
+if sqlite3 "${arg_database_file}" "SELECT 1 FROM \"${arg_table_name}\" LIMIT 1;" 1>/dev/null 2>&1; then
   debug "${0##*/}: detected existing table. inspecting schema information..."
-  current_column_specs="$(detect_column_specs_from_table "${database_file}" "${table_name}" || true)"
+  current_column_specs="$(detect_column_specs_from_table "${arg_database_file}" "${arg_table_name}" || true)"
   if [[ -z "${current_column_specs:-}" ]]; then
-    error "${0##*/}: failed to inspect schema information from existing table: ${table_name}"
+    error "${0##*/}: failed to inspect schema information from existing table: ${arg_table_name}"
     exit 1
   fi
   if [[ ${#arg_column_specs[*]} -eq 0 ]]; then
@@ -638,16 +669,16 @@ if sqlite3 "${database_file}" "SELECT 1 FROM \"${table_name}\" LIMIT 1;" 1>/dev/
   fi
   if compare_column_specs "${current_column_specs}" "${reconciled_column_specs}"; then
     table_description="existing table"
-    info "${0##*/}: existing table '${table_name}' has schema compatible with columns detected in importing data." 1>&2
+    info "${0##*/}: existing table '${arg_table_name}' has schema compatible with columns detected in importing data." 1>&2
   else
     if [[ -z "${arg_alter_table:-}" ]]; then
-      error "${0##*/}: existing table '${table_name}' has schema drift with columns detected in importing data. use --alter-table option to alter table." 1>&2
+      error "${0##*/}: existing table '${arg_table_name}' has schema drift with columns detected in importing data. use --alter-table option to alter table." 1>&2
       exit 1
     else
       table_description="existing table with modifying schema"
-      warn "${0##*/}: existing table '${table_name}' has schema drift with columns detected in importing data. will alter table..." 1>&2
-      if ! alter_table --pk="${pk_column_name:-}" "${database_file}" "${table_name}" "${current_column_specs}" "${reconciled_column_specs}"; then
-        error "${0##*/}: failed to alter table: ${table_name}"
+      warn "${0##*/}: existing table '${arg_table_name}' has schema drift with columns detected in importing data. will alter table..." 1>&2
+      if ! alter_table --pk="${pk_column_name:-}" "${arg_database_file}" "${arg_table_name}" "${current_column_specs}" "${reconciled_column_specs}"; then
+        error "${0##*/}: failed to alter table: ${arg_table_name}"
         exit 1
       fi
     fi
@@ -655,7 +686,7 @@ if sqlite3 "${database_file}" "SELECT 1 FROM \"${table_name}\" LIMIT 1;" 1>/dev/
 else
   debug "${0##*/}: not detected existing table. preparing schema information to create new table..."
   if [[ -z "${arg_create_table:-}" ]]; then
-    error "${0##*/}: table '${table_name}' does not exist. use --create-table option to create table." 1>&2
+    error "${0##*/}: table '${arg_table_name}' does not exist. use --create-table option to create table." 1>&2
     exit 1
   else
     table_description="new table"
@@ -678,17 +709,17 @@ else
       error "${0##*/}: failed to reconcile conflict on column specifications"
       exit 1
     fi
-    warn "${0##*/}: creating new table '${table_name}'" 1>&2
-    if ! create_table --pk="${pk_column_name:-}" "${database_file}" "${table_name}" "${reconciled_column_specs}"; then
-      error "${0##*/}: failed to create table: ${table_name}"
+    warn "${0##*/}: creating new table '${arg_table_name}'" 1>&2
+    if ! create_table --pk="${pk_column_name:-}" "${arg_database_file}" "${arg_table_name}" "${reconciled_column_specs}"; then
+      error "${0##*/}: failed to create table: ${arg_table_name}"
       exit 1
     fi
   fi
 fi
 
-current_column_specs="$(detect_column_specs_from_table "${database_file}" "${table_name}" || true)"
+current_column_specs="$(detect_column_specs_from_table "${arg_database_file}" "${arg_table_name}" || true)"
 if [[ -z "${current_column_specs:-}" ]]; then
-  error "${0##*/}: failed to inspect table schema: ${table_name}"
+  error "${0##*/}: failed to inspect table schema: ${arg_table_name}"
   exit 1
 fi
 
@@ -702,11 +733,11 @@ if [[ "${json_file_length:-0}" -eq 0 ]]; then
       exit 1
     fi
     validate_ident "${arg_primary_key_column%%:*}" "${arg_created_column%%:*}" "${arg_updated_column%%:*}" "${arg_deleted_column%%:*}"
-    info "${0##*/}: empty file. attempt inserting negative cache record: ${table_name}: ${pk_column_name}=${arg_insert_if_empty}" 1>&2
-    runq "${database_file}" \
+    info "${0##*/}: empty file. attempt inserting negative cache record: ${arg_table_name}: ${pk_column_name}=${arg_insert_if_empty}" 1>&2
+    runq "${arg_database_file}" \
       ".parameter set @arg_insert_if_empty '${arg_insert_if_empty}'" \
       "BEGIN TRANSACTION;" \
-      "INSERT OR IGNORE INTO \"${table_name}\" (
+      "INSERT OR IGNORE INTO \"${arg_table_name}\" (
          \"${arg_primary_key_column%%:*}\",
          \"${arg_created_column%%:*}\",
          \"${arg_updated_column%%:*}\",
@@ -718,7 +749,7 @@ if [[ "${json_file_length:-0}" -eq 0 ]]; then
          cast(strftime('%s') AS ${arg_deleted_column#*:})
        );" \
       "UPDATE
-         \"${table_name}\"
+         \"${arg_table_name}\"
        SET
          \"${arg_updated_column%%:*}\" = cast(strftime('%s') AS ${arg_updated_column#*:}),
          \"${arg_deleted_column%%:*}\" = cast(strftime('%s') AS ${arg_deleted_column#*:})
@@ -729,7 +760,7 @@ if [[ "${json_file_length:-0}" -eq 0 ]]; then
   fi
 fi
 
-import_table_name="__import__${table_name}"
+import_table_name="__import__${arg_table_name}"
 csv_file="$(mktemp "${TMPDIR}/csv_file.XXXXXXXX")"
 if ! jq --argjson current_column_specs "${current_column_specs:-[]}" --raw-output \
   'map(
@@ -768,7 +799,7 @@ fi
 # Otherwise the import will be failing if there is some conflicting records in importing data.
 #
 runq_args=(
-  "$(build_create_table_statement --temporary "${database_file}" "${import_table_name}" "${current_column_specs}")"
+  "$(build_create_table_statement --temporary "${arg_database_file}" "${import_table_name}" "${current_column_specs}")"
   ".mode csv"
   ".import '${csv_file}' ${import_table_name}"
   ".mode ascii"
@@ -791,15 +822,15 @@ if [[ -n "${arg_preserve_created:-}" ]]; then
 "UPDATE
   \"${import_table_name}\"
 SET
-  \"${arg_created_column%%:*}\" = \"${table_name}\".\"${arg_created_column%%:*}\"
+  \"${arg_created_column%%:*}\" = \"${arg_table_name}\".\"${arg_created_column%%:*}\"
 FROM
-  \"${table_name}\"
+  \"${arg_table_name}\"
 WHERE
-  \"${import_table_name}\".\"${arg_primary_key_column%%:*}\" = \"${table_name}\".\"${arg_primary_key_column%%:*}\";" \
+  \"${import_table_name}\".\"${arg_primary_key_column%%:*}\" = \"${arg_table_name}\".\"${arg_primary_key_column%%:*}\";" \
 )
 fi
 
-runq_args+=("$(build_insert_into_table_from_table_statement --insert-or-replace "${database_file}" "${table_name}" "${import_table_name}" "${current_column_specs}")")
+runq_args+=("$(build_insert_into_table_from_table_statement --insert-or-replace "${arg_database_file}" "${arg_table_name}" "${import_table_name}" "${current_column_specs}")")
 
 if [[ -n "${arg_soft_delete:-}" ]]; then
   if [[ -z "${arg_primary_key_column:-}" ]] || [[ -z "${arg_deleted_column:-}" ]]; then
@@ -809,7 +840,7 @@ if [[ -n "${arg_soft_delete:-}" ]]; then
   validate_ident "${arg_primary_key_column%%:*}" "${arg_deleted_column%%:*}"
   runq_args+=( \
 "UPDATE
-  \"${table_name}\"
+  \"${arg_table_name}\"
 SET
   \"${arg_deleted_column%%:*}\" = cast(strftime('%s') AS ${arg_deleted_column#*:})
 WHERE
@@ -830,15 +861,15 @@ runq_args+=(
 )
 
 cmdout="$(mktemp "${TMPDIR}/cmdout.XXXXXXXX")"
-if runq "${database_file}" "${runq_args[@]}" 1>"${cmdout}"; then
+if runq "${arg_database_file}" "${runq_args[@]}" 1>"${cmdout}"; then
   num_records="$(cat "${cmdout}")"
   if [[ -z "${DRY_RUN:-}" ]]; then
-    info "${0##*/}: imported ${num_records:-0} record(s) into '${table_name}' table (${table_description:-n/a})."
+    info "${0##*/}: imported ${num_records:-0} record(s) into '${arg_table_name}' table (${table_description:-n/a})."
   else
-    info "${0##*/}: imported ${num_records:-0} record(s) into '${table_name}' table (${table_description:-n/a}) (dry-run)."
+    info "${0##*/}: imported ${num_records:-0} record(s) into '${arg_table_name}' table (${table_description:-n/a}) (dry-run)."
   fi
 else
-  { echo "${0##*/}: failed to insert records into '${table_name}' table (${table_description:-n/a})"
+  { echo "${0##*/}: failed to insert records into '${arg_table_name}' table (${table_description:-n/a})"
     echo
     echo "SQL:"
     for arg in "${runq_args[@]}"; do echo "${arg}"; done
