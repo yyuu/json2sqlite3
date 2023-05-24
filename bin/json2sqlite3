@@ -68,39 +68,43 @@ ppq() {
     local line
     while IFS='' read -r line; do
       if [[ -z "${continued_p:-}" ]]; then
-        debug "sqlite3> ${line:-}"
+        echo "sqlite3> ${line:-}"
         if [[ "${line:-}" == "."* ]] || [[ "${line:-}" == *";" ]]; then
           :
         else
           continued_p=1
         fi
       else
-        debug "    ...> ${line:-}"
+        echo "    ...> ${line:-}"
       fi
     done <<< "${arg}"
   done
 }
 
-runq_safe() {
-  if [[ -n "${VERBOSE:-}" ]]; then
-    ppq "$@"
-  fi
-  sqlite3 "$@"
-}
-
 runq() {
   if [[ -n "${VERBOSE:-}" ]]; then
-    ppq "$@"
+    ppq "$@" | debug
   fi
   if [[ -z "${DRY_RUN:-}" ]]; then
     local cmderr
+    local cmdout
     cmderr="$(mktemp "${TMPDIR}/cmderr.XXXXXXXX")"
-    if ! sqlite3 "$@" 2>"${cmderr}"; then
-      exit_status="$?"
-      { echo "${0##*/}: sqlite3 failed with exit status ${exit_status}: sqlite3 $*"
+    cmdout="$(mktemp "${TMPDIR}/cmdout.XXXXXXXX")"
+    local exit_status=0
+    sqlite3 "$@" 1>"${cmdout}" 2>"${cmderr}" || exit_status="$?"
+    cat "${cmdout}"
+    cat "${cmderr}" 1>&2
+    if [[ "${exit_status:-0}" -eq 0 ]]; then
+      debug < "${cmdout}"
+    else
+      { echo "${0##*/}: sqlite3 failed with non-zero exit status: ${exit_status}"
+        ppq "$@"
+        cat "${cmdout}"
+        echo
         cat "${cmderr}"
+        echo
       } | error
-      return "${exit_status:-1}"
+      return "${exit_status:-0}"
     fi
   fi
 }
@@ -123,14 +127,33 @@ compare_column_specs() {
 }
 
 detect_column_specs_from_args() {
+  local pk
+  while [[ $# -gt 0 ]]; do
+    case "${1:-}" in
+    "--pk="* ) pk="${1#*=}" ;;
+    * ) break ;;
+    esac
+    shift 1
+  done
   local arg
   local cid=1
   local specs='[]'
   for arg in "$@"; do
-    local _name="${arg%%:*}"
-    local _type="${arg#*:}"
-    validate_ident "${_name}"
-    specs="$(jq --argjson cid "${cid}" --arg _name "${_name}" --arg _type "${_type}" --compact-output '. + [{cid: $cid, name: $_name, type: $_type}]' <<< "${specs}")"
+    local column_name="${arg%%:*}"
+    local column_type="${arg#*:}"
+    validate_ident "${column_name}"
+    local pk='false'
+    if [[ "${column_name:-}" == "${pk:-}" ]]; then
+      pk='true'
+    fi
+    specs="$(jq \
+      --argjson cid "${cid}" \
+      --arg name "${column_name}" \
+      --arg type "${column_type}" \
+      --compact-output \
+      '. + [{cid: $cid, name: $name, type: $type}]' \
+      <<< "${specs}" \
+    )"
     cid="$(( cid + 1 ))"
   done
   echo "${specs}"
@@ -160,7 +183,7 @@ detect_column_specs_from_json() {
         end) as $sqlite_type | [.key, $sqlite_type]
       )
   ) | add[] | @csv' < "${json_file}" > "${csv_file}"
-  runq_safe "/dev/null" \
+  DRY_RUN='' runq "/dev/null" \
     "CREATE TEMPORARY TABLE _s1 (name TEXT, type TEXT);" \
     "CREATE TEMPORARY TABLE s1 (cid INTEGER PRIMARY KEY, name TEXT, type TEXT);" \
     "CREATE UNIQUE INDEX s1_name ON s1 (name);" \
@@ -174,7 +197,7 @@ detect_column_specs_from_json() {
 detect_column_specs_from_table() {
   local database_file="$1"
   local table_name="$2"
-  runq_safe "${database_file}" \
+  DRY_RUN='' runq "${database_file}" \
     ".parameter set @table_name '${table_name}'" \
     "SELECT json_group_array(json_object('cid', cid, 'name', name, 'type', type)) FROM pragma_table_info(@table_name) ORDER BY cid;"
 }
@@ -253,7 +276,7 @@ build_insert_into_table_from_table_statement() {
   echo "${stmt}"
 }
 
-reconcile_column_specs() {
+reconcile_column_specs3() {
   local spec1="$1"
   local spec2="$2"
   local spec3="$3"
@@ -266,7 +289,7 @@ reconcile_column_specs() {
   jq --raw-output 'map([.cid, .name, .type])[] | @csv' <<< "${spec1}" > "${s1}"
   jq --raw-output 'map([.cid, .name, .type])[] | @csv' <<< "${spec2}" > "${s2}"
   jq --raw-output 'map([.cid, .name, .type])[] | @csv' <<< "${spec3}" > "${s3}"
-  runq_safe /dev/null \
+  DRY_RUN='' runq /dev/null \
     "CREATE TEMPORARY TABLE s1 (cid INTEGER, name TEXT, type TEXT);" \
     "CREATE TEMPORARY TABLE s2 (cid INTEGER, name TEXT, type TEXT);" \
     "CREATE TEMPORARY TABLE s3 (cid INTEGER, name TEXT, type TEXT);" \
@@ -326,7 +349,7 @@ reconcile_column_specs() {
       s0;"
 }
 
-reconcile_table() {
+alter_table() {
   local pk
   while [[ $# -gt 0 ]]; do
     case "${1:-}" in
@@ -366,7 +389,12 @@ create_table() {
   local database_file="$1"
   local table_name="$2"
   local table_column_specs="$3"
-  runq "${database_file}" "$(build_create_table_statement --pk="${pk:-}" "${database_file}" "${table_name}" "${table_column_specs}")"
+  local stmt
+  stmt="$(build_create_table_statement --pk="${pk:-}" "${database_file}" "${table_name}" "${table_column_specs}" || true)"
+  if [[ -z "${stmt:-}" ]]; then
+    return 1
+  fi
+  runq "${database_file}" "${stmt}"
 }
 
 arg_after_queries=()
@@ -557,50 +585,7 @@ fi
 json_file="$(mktemp "${TMPDIR}/json_file.XXXXXXXX")"
 cat > "${json_file}"
 
-# managing table schema...
-if runq_safe "${database_file}" "SELECT 1 FROM \"${table_name}\" LIMIT 1;" 1>/dev/null 2>&1; then
-  current_column_specs="$(detect_column_specs_from_table "${database_file}" "${table_name}")"
-  if [[ ${#arg_column_specs[*]} -eq 0 ]]; then
-    specified_column_specs='[]'
-  else
-    specified_column_specs="$(detect_column_specs_from_args "${arg_column_specs[@]}")"
-  fi
-  detected_column_specs="$(detect_column_specs_from_json "${json_file}")"
-  reconciled_column_specs="$(reconcile_column_specs "${current_column_specs}" "${specified_column_specs}" "${detected_column_specs}")"
-  if compare_column_specs "${current_column_specs}" "${reconciled_column_specs}"; then
-    debug "${0##*/}: existing table '${table_name}' has schema compatible with columns detected in importing data." 1>&2
-  else
-    if [[ -z "${arg_alter_table:-}" ]]; then
-      error "${0##*/}: existing table '${table_name}' has schema drift with columns detected in importing data. use --alter-table option to alter table." 1>&2
-      exit 1
-    else
-      warn "${0##*/}: existing table '${table_name}' has schema drift with columns detected in importing data. will alter table..." 1>&2
-      reconcile_table --pk="${pk_column_name:-}" "${database_file}" "${table_name}" "${current_column_specs}" "${reconciled_column_specs}"
-    fi
-  fi
-else
-  if [[ -z "${arg_create_table:-}" ]]; then
-    error "${0##*/}: table '${table_name}' does not exist. use --create-table option to create table." 1>&2
-    exit 1
-  else
-    if [[ ${#arg_column_specs[*]} -eq 0 ]]; then
-      specified_column_specs='[]'
-    else
-      specified_column_specs="$(detect_column_specs_from_args "${arg_column_specs[@]}")"
-    fi
-    detected_column_specs="$(detect_column_specs_from_json "${json_file}")"
-    reconciled_column_specs="$(reconcile_column_specs '[]' "${specified_column_specs}" "${detected_column_specs}")"
-    warn "${0##*/}: creating new table '${table_name}'." 1>&2
-    create_table --pk="${pk_column_name:-}" "${database_file}" "${table_name}" "${reconciled_column_specs}"
-  fi
-fi
-
-current_column_specs="$(detect_column_specs_from_table "${database_file}" "${table_name}")"
-if [[ -z "${current_column_specs:-}" ]]; then
-  error "${0##*/}: failed to inspect table schema: ${table_name}"
-  exit 1
-fi
-
+# fail early if the input data is not well-formed
 json_file_length=0
 if [[ -s "${json_file}" ]]; then
   # SQLite3's 'json' mode will produce records in array<object> schema.
@@ -614,6 +599,90 @@ if [[ -s "${json_file}" ]]; then
   fi
 else
   json_file_length=0
+fi
+
+# managing table schema...
+table_description=""
+if DRY_RUN='' runq "${database_file}" "SELECT 1 FROM \"${table_name}\" LIMIT 1;" 1>/dev/null 2>&1; then
+  debug "${0##*/}: detected existing table. inspecting schema information..."
+  current_column_specs="$(detect_column_specs_from_table "${database_file}" "${table_name}" || true)"
+  if [[ -z "${current_column_specs:-}" ]]; then
+    error "${0##*/}: failed to inspect schema information from existing table: ${table_name}"
+    exit 1
+  fi
+  if [[ ${#arg_column_specs[*]} -eq 0 ]]; then
+    specified_column_specs='[]'
+  else
+    specified_column_specs="$(detect_column_specs_from_args --pk="${pk_column_name:-}" "${arg_column_specs[@]}" || true)"
+    if [[ -z "${specified_column_specs:-}" ]]; then
+      error "${0##*/}: failed to parse column specifications from arguments"
+      exit 1
+    fi
+  fi
+  detected_column_specs="$(detect_column_specs_from_json "${json_file}" || true)"
+  if [[ -z "${detected_column_specs:-}" ]]; then
+    error "${0##*/}: failed to detect column specifications from input data"
+    exit 1
+  fi
+  reconciled_column_specs="$(reconcile_column_specs3 "${current_column_specs}" "${specified_column_specs}" "${detected_column_specs}" || true)"
+  if [[ -z "${reconciled_column_specs:-}" ]]; then
+    error "${0##*/}: failed to reconcile conflict on column specifications"
+    exit 1
+  fi
+  if compare_column_specs "${current_column_specs}" "${reconciled_column_specs}"; then
+    table_description="existing table"
+    debug "${0##*/}: existing table '${table_name}' has schema compatible with columns detected in importing data." 1>&2
+  else
+    if [[ -z "${arg_alter_table:-}" ]]; then
+      error "${0##*/}: existing table '${table_name}' has schema drift with columns detected in importing data. use --alter-table option to alter table." 1>&2
+      exit 1
+    else
+      table_description="existing table with modifying schema"
+      warn "${0##*/}: existing table '${table_name}' has schema drift with columns detected in importing data. will alter table...: ${reconciled_column_specs}" 1>&2
+      if ! alter_table --pk="${pk_column_name:-}" "${database_file}" "${table_name}" "${current_column_specs}" "${reconciled_column_specs}"; then
+        error "${0##*/}: failed to alter table: ${table_name}"
+        exit 1
+      fi
+    fi
+  fi
+else
+  debug "${0##*/}: not detected existing table. preparing schema information to create new table..."
+  if [[ -z "${arg_create_table:-}" ]]; then
+    error "${0##*/}: table '${table_name}' does not exist. use --create-table option to create table." 1>&2
+    exit 1
+  else
+    table_description="new table"
+    if [[ ${#arg_column_specs[*]} -eq 0 ]]; then
+      specified_column_specs='[]'
+    else
+      specified_column_specs="$(detect_column_specs_from_args --pk="${pk_column_name:-}" "${arg_column_specs[@]}" || true)"
+      if [[ -z "${specified_column_specs:-}" ]]; then
+        error "${0##*/}: failed to parse column specifications from arguments"
+        exit 1
+      fi
+    fi
+    detected_column_specs="$(detect_column_specs_from_json "${json_file}" || true)"
+    if [[ -z "${detected_column_specs:-}" ]]; then
+      error "${0##*/}: failed to detect column specifications from input data"
+      exit 1
+    fi
+    reconciled_column_specs="$(reconcile_column_specs3 '[]' "${specified_column_specs}" "${detected_column_specs}" || true)"
+    if [[ -z "${reconciled_column_specs:-}" ]]; then
+      error "${0##*/}: failed to reconcile conflict on column specifications"
+      exit 1
+    fi
+    warn "${0##*/}: creating new table '${table_name}': ${reconciled_column_specs}" 1>&2
+    if ! create_table --pk="${pk_column_name:-}" "${database_file}" "${table_name}" "${reconciled_column_specs}"; then
+      error "${0##*/}: failed to create table: ${table_name}"
+      exit 1
+    fi
+  fi
+fi
+
+current_column_specs="$(detect_column_specs_from_table "${database_file}" "${table_name}" || true)"
+if [[ -z "${current_column_specs:-}" ]]; then
+  error "${0##*/}: failed to inspect table schema: ${table_name}"
+  exit 1
 fi
 
 if [[ "${json_file_length:-0}" -eq 0 ]]; then
@@ -757,9 +826,9 @@ cmdout="$(mktemp "${TMPDIR}/cmdout.XXXXXXXX")"
 if runq "${database_file}" "${runq_args[@]}" 1>"${cmdout}"; then
   num_records="$(cat "${cmdout}")"
   if [[ -z "${DRY_RUN:-}" ]]; then
-    info "${0##*/}: imported ${num_records:-0} record(s) into '${table_name}' table."
+    info "${0##*/}: imported ${num_records:-0} record(s) into '${table_name}' table (${table_description:-n/a})."
   else
-    info "${0##*/}: imported ${num_records:-0} record(s) into '${table_name}' table (dry-run)."
+    info "${0##*/}: imported ${num_records:-0} record(s) into '${table_name}' table (${table_description:-n/a}) (dry-run)."
   fi
 else
   { echo "${0##*/}: failed to insert records into ${table_name}"
