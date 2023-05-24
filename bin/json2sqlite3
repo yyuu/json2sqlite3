@@ -114,8 +114,13 @@ compare_column_specs() {
   local test_column_specs="$2"
   local cmdout
   cmdout="$(mktemp "${TMPDIR}/cmdout.XXXXXXXX")"
-  if diff -u <(jq --raw-output 'map([.name, .type]) | sort[] | @tsv' <<< "${control_column_specs}") \
-               <(jq --raw-output 'map([.name, .type]) | sort[] | @tsv' <<< "${test_column_specs}") 1>"${cmdout}"; then
+  local control_column_names
+  local test_column_names
+  control_column_names="$(mktemp "${TMPDIR}/tmp.XXXXXXXX")"
+  test_column_names="$(mktemp "${TMPDIR}/tmp.XXXXXXXX")"
+  jq --raw-output 'map([.name, .type, (if .pk == 1 then "PRIMARY KEY" else "" end)]) | sort[] | @tsv' <<< "${control_column_specs}" > "${control_column_names}"
+  jq --raw-output 'map([.name, .type, (if .pk == 1 then "PRIMARY KEY" else "" end)]) | sort[] | @tsv' <<< "${test_column_specs}" > "${test_column_names}"
+  if diff -u "${control_column_names}" "${test_column_names}"; then
     :
   else
     exit_status="$?"
@@ -148,10 +153,13 @@ detect_column_specs_from_args() {
     fi
     specs="$(jq \
       --argjson cid "${cid}" \
+      --argjson notnull 'false' \
+      --argjson dflt_value 'null' \
+      --argjson pk "${pk:-false}" \
       --arg name "${column_name}" \
       --arg type "${column_type}" \
       --compact-output \
-      '. + [{cid: $cid, name: $name, type: $type}]' \
+      '. + [{cid: $cid, name: $name, type: $type, notnull: $notnull, dflt_value: $dflt_value, pk: $pk}]' \
       <<< "${specs}" \
     )"
     cid="$(( cid + 1 ))"
@@ -191,7 +199,7 @@ detect_column_specs_from_json() {
     ".import '${csv_file}' _s1" \
     ".mode ascii" \
     "INSERT OR IGNORE INTO s1 (name, type) SELECT name, type FROM _s1;" \
-    "SELECT json_group_array(json_object('cid', cid, 'name', name, 'type', type)) FROM s1 ORDER BY cid;"
+    "SELECT json_group_array(json_object('cid', cid, 'name', name, 'type', type, 'notnull', FALSE, 'dflt_value', NULL, 'pk', FALSE)) FROM s1 ORDER BY cid;"
 }
 
 detect_column_specs_from_table() {
@@ -199,7 +207,7 @@ detect_column_specs_from_table() {
   local table_name="$2"
   DRY_RUN='' runq "${database_file}" \
     ".parameter set @table_name '${table_name}'" \
-    "SELECT json_group_array(json_object('cid', cid, 'name', name, 'type', type)) FROM pragma_table_info(@table_name) ORDER BY cid;"
+    "SELECT json_group_array(json_object('cid', cid, 'name', name, 'type', type, 'notnull', \"notnull\", 'dflt_value', dflt_value, 'pk', pk)) FROM pragma_table_info(@table_name) ORDER BY cid;"
 }
 
 build_create_table_statement() {
@@ -286,13 +294,13 @@ reconcile_column_specs3() {
   s1="$(mktemp "${TMPDIR}/s1.XXXXXXXX")"
   s2="$(mktemp "${TMPDIR}/s2.XXXXXXXX")"
   s3="$(mktemp "${TMPDIR}/s3.XXXXXXXX")"
-  jq --raw-output 'map([.cid, .name, .type])[] | @csv' <<< "${spec1}" > "${s1}"
-  jq --raw-output 'map([.cid, .name, .type])[] | @csv' <<< "${spec2}" > "${s2}"
-  jq --raw-output 'map([.cid, .name, .type])[] | @csv' <<< "${spec3}" > "${s3}"
+  jq --raw-output 'map([.cid, .name, .type, .notnull, .dflt_value, .pk])[] | @csv' <<< "${spec1}" > "${s1}"
+  jq --raw-output 'map([.cid, .name, .type, .notnull, .dflt_value, .pk])[] | @csv' <<< "${spec2}" > "${s2}"
+  jq --raw-output 'map([.cid, .name, .type, .notnull, .dflt_value, .pk])[] | @csv' <<< "${spec3}" > "${s3}"
   DRY_RUN='' runq /dev/null \
-    "CREATE TEMPORARY TABLE s1 (cid INTEGER, name TEXT, type TEXT);" \
-    "CREATE TEMPORARY TABLE s2 (cid INTEGER, name TEXT, type TEXT);" \
-    "CREATE TEMPORARY TABLE s3 (cid INTEGER, name TEXT, type TEXT);" \
+    "CREATE TEMPORARY TABLE s1 (cid INTEGER, name TEXT, type TEXT, \"notnull\" INTEGER, dflt_value BLOB, pk INTEGER);" \
+    "CREATE TEMPORARY TABLE s2 (cid INTEGER, name TEXT, type TEXT, \"notnull\" INTEGER, dflt_value BLOB, pk INTEGER);" \
+    "CREATE TEMPORARY TABLE s3 (cid INTEGER, name TEXT, type TEXT, \"notnull\" INTEGER, dflt_value BLOB, pk INTEGER);" \
     ".mode csv" \
     ".import '${s1}' s1" \
     ".import '${s2}' s2" \
@@ -323,7 +331,22 @@ reconcile_column_specs3() {
           WHEN s1.type IS NOT NULL THEN s1.type
           WHEN s2.type IS NOT NULL THEN s2.type
           ELSE s3.type
-          END ) AS type
+          END ) AS type,
+        ( CASE
+          WHEN s1.\"notnull\" IS NOT NULL THEN s1.\"notnull\"
+          WHEN s2.\"notnull\" IS NOT NULL THEN s2.\"notnull\"
+          ELSE s3.\"notnull\"
+          END ) AS \"notnull\",
+        ( CASE
+          WHEN s1.dflt_value IS NOT NULL THEN s1.dflt_value
+          WHEN s2.dflt_value IS NOT NULL THEN s2.dflt_value
+          ELSE s3.dflt_value
+          END ) AS dflt_value,
+        ( CASE
+          WHEN s1.pk IS NOT NULL THEN s1.pk
+          WHEN s2.pk IS NOT NULL THEN s2.pk
+          ELSE s3.pk
+          END ) AS pk
       FROM
         names
       LEFT JOIN
@@ -342,7 +365,10 @@ reconcile_column_specs3() {
         json_object(
           'cid', cid,
           'name', name,
-          'type', type
+          'type', type,
+          'notnull', \"notnull\",
+          'dflt_value', dflt_value,
+          'pk', pk
         )
       )
     FROM
@@ -631,14 +657,14 @@ if DRY_RUN='' runq "${database_file}" "SELECT 1 FROM \"${table_name}\" LIMIT 1;"
   fi
   if compare_column_specs "${current_column_specs}" "${reconciled_column_specs}"; then
     table_description="existing table"
-    debug "${0##*/}: existing table '${table_name}' has schema compatible with columns detected in importing data." 1>&2
+    info "${0##*/}: existing table '${table_name}' has schema compatible with columns detected in importing data." 1>&2
   else
     if [[ -z "${arg_alter_table:-}" ]]; then
       error "${0##*/}: existing table '${table_name}' has schema drift with columns detected in importing data. use --alter-table option to alter table." 1>&2
       exit 1
     else
       table_description="existing table with modifying schema"
-      warn "${0##*/}: existing table '${table_name}' has schema drift with columns detected in importing data. will alter table...: ${reconciled_column_specs}" 1>&2
+      warn "${0##*/}: existing table '${table_name}' has schema drift with columns detected in importing data. will alter table..." 1>&2
       if ! alter_table --pk="${pk_column_name:-}" "${database_file}" "${table_name}" "${current_column_specs}" "${reconciled_column_specs}"; then
         error "${0##*/}: failed to alter table: ${table_name}"
         exit 1
@@ -671,7 +697,7 @@ else
       error "${0##*/}: failed to reconcile conflict on column specifications"
       exit 1
     fi
-    warn "${0##*/}: creating new table '${table_name}': ${reconciled_column_specs}" 1>&2
+    warn "${0##*/}: creating new table '${table_name}'" 1>&2
     if ! create_table --pk="${pk_column_name:-}" "${database_file}" "${table_name}" "${reconciled_column_specs}"; then
       error "${0##*/}: failed to create table: ${table_name}"
       exit 1
@@ -831,7 +857,7 @@ if runq "${database_file}" "${runq_args[@]}" 1>"${cmdout}"; then
     info "${0##*/}: imported ${num_records:-0} record(s) into '${table_name}' table (${table_description:-n/a}) (dry-run)."
   fi
 else
-  { echo "${0##*/}: failed to insert records into ${table_name}"
+  { echo "${0##*/}: failed to insert records into '${table_name}' table (${table_description:-n/a})"
     echo
     echo "SQL:"
     for arg in "${runq_args[@]}"; do echo "${arg}"; done
