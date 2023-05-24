@@ -82,12 +82,16 @@ ppq() {
 }
 
 runq_safe() {
-  ppq "$@"
+  if [[ -n "${VERBOSE:-}" ]]; then
+    ppq "$@"
+  fi
   sqlite3 "$@"
 }
 
 runq() {
-  ppq "$@"
+  if [[ -n "${VERBOSE:-}" ]]; then
+    ppq "$@"
+  fi
   if [[ -z "${DRY_RUN:-}" ]]; then
     local cmderr
     cmderr="$(mktemp "${TMPDIR}/cmderr.XXXXXXXX")"
@@ -157,14 +161,14 @@ detect_column_specs_from_json() {
       )
   ) | add[] | @csv' < "${json_file}" > "${csv_file}"
   runq_safe "/dev/null" \
-    "CREATE TEMPORARY TABLE _xs (name TEXT, type TEXT);" \
-    "CREATE TEMPORARY TABLE xs (cid INTEGER PRIMARY KEY, name TEXT, type TEXT);" \
-    "CREATE UNIQUE INDEX xs_name_type ON xs (name, type);" \
+    "CREATE TEMPORARY TABLE _s1 (name TEXT, type TEXT);" \
+    "CREATE TEMPORARY TABLE s1 (cid INTEGER PRIMARY KEY, name TEXT, type TEXT);" \
+    "CREATE UNIQUE INDEX s1_name ON s1 (name);" \
     ".mode csv" \
-    ".import '${csv_file}' _xs" \
+    ".import '${csv_file}' _s1" \
     ".mode ascii" \
-    "INSERT OR IGNORE INTO xs (name, type) SELECT name, type FROM _xs;" \
-    "SELECT json_group_array(json_object('cid', cid, 'name', name, 'type', type)) FROM xs ORDER BY cid;"
+    "INSERT OR IGNORE INTO s1 (name, type) SELECT name, type FROM _s1;" \
+    "SELECT json_group_array(json_object('cid', cid, 'name', name, 'type', type)) FROM s1 ORDER BY cid;"
 }
 
 detect_column_specs_from_table() {
@@ -197,12 +201,14 @@ build_create_table_statement() {
   fi
   local _column
   while IFS='' read -r _column; do
-    validate_ident "${_column%%:*}"
-    if [[ "${_column%%:*}" == "${pk:-}" ]]; then
+    column_name="${_column%%:*}"
+    column_type="${_column#*:}"
+    validate_ident "${column_name}"
+    if [[ "${column_name}" == "${pk:-}" ]]; then
       column_type+=" PRIMARY KEY"
     fi
     stmt+=$'\n'
-    stmt+="  \"${_column%%:*}\" ${_column#*:},"
+    stmt+="  \"${column_name}\" ${column_type},"
   done < <(jq --raw-output 'map("\(.name):\(.type)")[]' <<< "${create_table_specs}")
   stmt="${stmt%,}"
   stmt+=$'\n)'
@@ -388,6 +394,13 @@ while [[ $# -gt 0 ]]; do
     else
       arg_after_queries+=("${2:-}")
       shift 1
+    fi
+    ;;
+  "--alter-table" | "--no-alter-table" )
+    if [[ "$1" == "--no-"* ]]; then
+      arg_alter_table=
+    else
+      arg_alter_table=1
     fi
     ;;
   "--before-query" | "--before-query="* )
