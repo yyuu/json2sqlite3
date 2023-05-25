@@ -2,6 +2,34 @@
 
 load test_helper
 
+@test "alter existing table (dry-run)" {
+  database_file="$(generate_database_file "${BATS_TEST_FILENAME##*/}")"
+  table_name="$(generate_table_name "${BATS_TEST_FILENAME##*/}")"
+  sqlite3 "${database_file}" <<SQL
+CREATE TABLE "${table_name}" (_Id INTEGER);
+SQL
+  run json2sqlite3 --dry-run "${database_file}" "${table_name}" < <(
+    jq --compact-output --null-input '[
+      {"_Id": 1, "foo": "FOO1", "bar": "BAR1"},
+      {"_Id": 2, "foo": "FOO2", "bar": "BAR2"},
+      {"_Id": 3, "foo": "FOO3", "bar": "BAR3"}
+    ]'
+  )
+  assert_success
+  run sqlite3 "${database_file}" <<SQL
+SELECT COUNT(1) FROM "${table_name}" ORDER BY _Id;
+SQL
+  assert_output "0"
+  assert_success
+  run sqlite3 "${database_file}" <<SQL
+SELECT * FROM pragma_table_info("${table_name}") ORDER BY cid;
+SQL
+  assert_output <<EOS
+0|_Id|INTEGER|0||0
+EOS
+  assert_success
+}
+
 @test "alter existing table" {
   database_file="$(generate_database_file "${BATS_TEST_FILENAME##*/}")"
   table_name="$(generate_table_name "${BATS_TEST_FILENAME##*/}")"

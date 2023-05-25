@@ -641,6 +641,7 @@ fi
 
 # managing table schema...
 table_description=""
+reconciled_column_specs='[]'
 if sqlite3 "${arg_database_file}" "SELECT 1 FROM \"${arg_table_name}\" LIMIT 1;" 1>/dev/null 2>&1; then
   debug "${0##*/}: detected existing table. inspecting schema information..."
   current_column_specs="$(detect_column_specs_from_table "${arg_database_file}" "${arg_table_name}" || true)"
@@ -717,10 +718,14 @@ else
   fi
 fi
 
-current_column_specs="$(detect_column_specs_from_table "${arg_database_file}" "${arg_table_name}" || true)"
-if [[ -z "${current_column_specs:-}" ]]; then
-  error "${0##*/}: failed to inspect table schema: ${arg_table_name}"
-  exit 1
+if [[ -z "${DRY_RUN:-}" ]]; then
+  current_column_specs="$(detect_column_specs_from_table "${arg_database_file}" "${arg_table_name}" || true)"
+  if [[ -z "${current_column_specs:-}" ]]; then
+    error "${0##*/}: failed to inspect table schema: ${arg_table_name}"
+    exit 1
+  fi
+else
+  current_column_specs="${reconciled_column_specs}"
 fi
 
 if [[ "${json_file_length:-0}" -eq 0 ]]; then
