@@ -2,6 +2,7 @@
 
 PREFIX ?= /usr/local
 BIN_DIR ?= $(PREFIX)/bin
+VERSION ?= 0.20230525.1
 
 all: build
 
@@ -11,7 +12,10 @@ clean:
 
 install:
 	install -d -m 0755 $(BIN_DIR)
-	install -m 0755 $(wildcard $(CURDIR)/bin/*) $(BIN_DIR)/
+	set -e; for file in $(wildcard $(CURDIR)/bin/*); do \
+		sed -e 's/@@VERSION@@/$(VERSION)/g' "$${file}" > "$(BIN_DIR)/$$(basename "$${file}")"; \
+		chmod 0755 "$(BIN_DIR)/$$(basename "$${file}")"; \
+	done
 
 test:
 	shellcheck $(wildcard $(CURDIR)/bin/*)

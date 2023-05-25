@@ -5,7 +5,7 @@ set -euo pipefail
 [[ -z "${DEBUG:-}" ]] || set -x
 
 TMPDIR="$(mktemp -d)"
-VERSION="0.20230523.1"
+VERSION="@@VERSION@@"
 VERBOSITY=2
 
 on_exit() {
@@ -594,6 +594,9 @@ while [[ $# -gt 0 ]]; do
     arg_column_specs+=("${arg_updated_column}")
     ;;
   "--version" ) # usage: display version information
+    if [[ "${VERSION:-}" == "@@"* ]]; then
+      VERSION="$(git describe --tags HEAD 2>/dev/null || true)"
+    fi
     echo "${0##*/} ${VERSION:-n/a}"
     exit 0
     ;;
