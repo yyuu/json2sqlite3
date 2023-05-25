@@ -80,7 +80,7 @@ validate_ident() {
   local ident
   for ident in "$@"; do
     if [[ ! "${ident:-}" =~ ^[A-Z_a-z][0-9A-Z_a-z]*$ ]]; then
-      warn "${0##*/}: invalid identifier for sqlite3 table/column name: ${ident:-}"
+      warn "${0##*/}: invalid identifier for sqlite3 table/column name: \"${ident:-}\""
       return 1
     fi
   done
@@ -176,37 +176,43 @@ detect_column_specs_from_args() {
 
 detect_column_specs_from_json() {
   local json_file="$1"
-  local csv_file
-  csv_file="$(mktemp "${TMPDIR}/csv_file.XXXXXXXX")"
-  jq --raw-output 'map(
-    to_entries | map(
-      (.value | type) as $json_type |
-        (if "array" == $json_type then
-          "JSON"
-        elif "boolean" == $json_type then
-          "INTEGER"
-        elif "null" == $json_type then
-          "JSON"
-        elif "number" == $json_type then
-          "NUMERIC"
-        elif "object" == $json_type then
-          "JSON"
-        elif "string" == $json_type then
-          "TEXT"
-        else
-          error("unsupported JSON data type: \(.value):\($json_type)")
-        end) as $sqlite_type | [.key, $sqlite_type]
-      )
-  ) | add[] | @csv' < "${json_file}" > "${csv_file}"
-  sqlite3 "/dev/null" \
-    "CREATE TEMPORARY TABLE _s1 (name TEXT, type TEXT);" \
-    "CREATE TEMPORARY TABLE s1 (cid INTEGER PRIMARY KEY, name TEXT, type TEXT);" \
-    "CREATE UNIQUE INDEX s1_name ON s1 (name);" \
-    ".mode csv" \
-    ".import '${csv_file}' _s1" \
-    ".mode ascii" \
-    "INSERT OR IGNORE INTO s1 (name, type) SELECT name, type FROM _s1;" \
-    "SELECT json_group_array(json_object('cid', cid, 'name', name, 'type', type, 'notnull', FALSE, 'dflt_value', NULL, 'pk', FALSE)) FROM s1 ORDER BY cid;"
+  local json_file_length=0
+  json_file_length="$(jq --raw-output 'length' < "${json_file}")"
+  if [[ "${json_file_length:-0}" -eq 0 ]]; then
+    echo '[]'
+  else
+    local csv_file
+    csv_file="$(mktemp "${TMPDIR}/csv_file.XXXXXXXX")"
+    jq --raw-output 'map(
+      to_entries | map(
+        (.value | type) as $json_type |
+          (if "array" == $json_type then
+            "JSON"
+          elif "boolean" == $json_type then
+            "INTEGER"
+          elif "null" == $json_type then
+            "JSON"
+          elif "number" == $json_type then
+            "NUMERIC"
+          elif "object" == $json_type then
+            "JSON"
+          elif "string" == $json_type then
+            "TEXT"
+          else
+            error("unsupported JSON data type: \(.value):\($json_type)")
+          end) as $sqlite_type | [.key, $sqlite_type]
+        )
+    ) | if 0 < length then add[] else [] end | @csv' < "${json_file}" > "${csv_file}"
+    sqlite3 "/dev/null" \
+      "CREATE TEMPORARY TABLE _s1 (name TEXT, type TEXT);" \
+      "CREATE TEMPORARY TABLE s1 (cid INTEGER PRIMARY KEY, name TEXT, type TEXT);" \
+      "CREATE UNIQUE INDEX s1_name ON s1 (name);" \
+      ".mode csv" \
+      ".import '${csv_file}' _s1" \
+      ".mode ascii" \
+      "INSERT OR IGNORE INTO s1 (name, type) SELECT name, type FROM _s1 WHERE 0 < length(name);" \
+      "SELECT json_group_array(json_object('cid', cid, 'name', name, 'type', type, 'notnull', FALSE, 'dflt_value', NULL, 'pk', FALSE)) FROM s1 ORDER BY cid;"
+  fi
 }
 
 detect_column_specs_from_table() {
@@ -238,19 +244,29 @@ build_create_table_statement() {
     stmt="CREATE TEMPORARY TABLE \"${table_name}\" ("
   fi
   local _column
+  local _columns=()
   while IFS='' read -r _column; do
-    column_name="${_column%%:*}"
-    column_type="${_column#*:}"
-    validate_ident "${column_name}"
-    if [[ "${column_name}" == "${pk:-}" ]]; then
-      column_type+=" PRIMARY KEY"
-    fi
-    stmt+=$'\n'
-    stmt+="  \"${column_name}\" ${column_type},"
+    validate_ident "${_column%%:*}"
+    _columns+=("${_column}")
   done < <(jq --raw-output 'map("\(.name):\(.type)")[]' <<< "${create_table_specs}")
-  stmt="${stmt%,}"
-  stmt+=$'\n)'
-  echo "${stmt};"
+  if [[ ${#_columns[@]} -eq 0 ]]; then
+    echo "${0##*/}: empty table column information" 1>&2
+    return 1
+  else
+    for _column in "${_columns[@]}"; do
+      column_name="${_column%%:*}"
+      column_type="${_column#*:}"
+      validate_ident "${column_name}"
+      if [[ "${column_name}" == "${pk:-}" ]]; then
+        column_type+=" PRIMARY KEY"
+      fi
+      stmt+=$'\n'
+      stmt+="  \"${column_name}\" ${column_type},"
+    done
+    stmt="${stmt%,}"
+    stmt+=$'\n)'
+    echo "${stmt};"
+  fi
 }
 
 build_insert_into_table_from_table_statement() {
@@ -273,22 +289,30 @@ build_insert_into_table_from_table_statement() {
     stmt="INSERT INTO \"${table_name}\" ("
   fi
   local _column
+  local _columns=()
   while IFS='' read -r _column; do
     validate_ident "${_column%%:*}"
-    stmt+=$'\n'
-    stmt+="  \"${_column%%:*}\","
+    _columns+=("${_column}")
   done < <(jq --raw-output 'map("\(.name):\(.type)")[]' <<< "${table_column_specs}")
-  stmt="${stmt%,}"
-  stmt+=$'\n) SELECT'
-  while IFS='' read -r _column; do
-    validate_ident "${_column%%:*}"
-    stmt+=$'\n'
-    stmt+="  \"${_column%%:*}\","
-  done < <(jq --raw-output 'map("\(.name):\(.type)")[]' <<< "${table_column_specs}")
-  stmt="${stmt%,}"
-  stmt+=$'\nFROM\n'
-  stmt+="  \"${source_table_name}\";"
-  echo "${stmt}"
+  if [[ ${#_columns[*]} -eq 0 ]]; then
+    echo "${0##*/}: empty table column information" 1>&2
+    return 1
+  else
+    for _column in "${_columns[@]}"; do
+      stmt+=$'\n'
+      stmt+="  \"${_column%%:*}\","
+    done
+    stmt="${stmt%,}"
+    stmt+=$'\n) SELECT'
+    for _column in "${_columns[@]}"; do
+      stmt+=$'\n'
+      stmt+="  \"${_column%%:*}\","
+    done
+    stmt="${stmt%,}"
+    stmt+=$'\nFROM\n'
+    stmt+="  \"${source_table_name}\";"
+    echo "${stmt}"
+  fi
 }
 
 reconcile_column_specs3() {
@@ -667,17 +691,23 @@ if sqlite3 "${arg_database_file}" "SELECT 1 FROM \"${arg_table_name}\" LIMIT 1;"
   if [[ -z "${reconciled_column_specs:-}" ]]; then
     error "${0##*/}: failed to reconcile conflict on column specifications"
     exit 1
+  else
+    reconciled_column_specs_length="$(jq --raw-output 'length' <<< "${reconciled_column_specs:-[]}")"
+    if [[ "${reconciled_column_specs_length:-0}" -eq 0 ]]; then
+      error "${0##*/}: empty table column information for '${arg_table_name}'"
+      exit 1
+    fi
   fi
   if compare_column_specs "${current_column_specs}" "${reconciled_column_specs}"; then
     table_description="existing table"
-    info "${0##*/}: existing table '${arg_table_name}' has schema compatible with columns detected in importing data." 1>&2
+    info "${0##*/}: existing table '${arg_table_name}' has schema compatible with columns detected in importing data."
   else
     if [[ -z "${arg_alter_table:-}" ]]; then
-      error "${0##*/}: existing table '${arg_table_name}' has schema drift with columns detected in importing data. use --alter-table option to alter table." 1>&2
+      error "${0##*/}: existing table '${arg_table_name}' has schema drift with columns detected in importing data. use --alter-table option to alter table."
       exit 1
     else
       table_description="existing table with modifying schema"
-      warn "${0##*/}: existing table '${arg_table_name}' has schema drift with columns detected in importing data. will alter table..." 1>&2
+      warn "${0##*/}: existing table '${arg_table_name}' has schema drift with columns detected in importing data. will alter table..."
       if ! alter_table --pk="${pk_column_name:-}" "${arg_database_file}" "${arg_table_name}" "${current_column_specs}" "${reconciled_column_specs}"; then
         error "${0##*/}: failed to alter table: ${arg_table_name}"
         exit 1
@@ -687,7 +717,7 @@ if sqlite3 "${arg_database_file}" "SELECT 1 FROM \"${arg_table_name}\" LIMIT 1;"
 else
   debug "${0##*/}: not detected existing table. preparing schema information to create new table..."
   if [[ -z "${arg_create_table:-}" ]]; then
-    error "${0##*/}: table '${arg_table_name}' does not exist. use --create-table option to create table." 1>&2
+    error "${0##*/}: table '${arg_table_name}' does not exist. use --create-table option to create table."
     exit 1
   else
     table_description="new table"
@@ -709,8 +739,14 @@ else
     if [[ -z "${reconciled_column_specs:-}" ]]; then
       error "${0##*/}: failed to reconcile conflict on column specifications"
       exit 1
+    else
+      reconciled_column_specs_length="$(jq --raw-output 'length' <<< "${reconciled_column_specs:-[]}")"
+      if [[ "${reconciled_column_specs_length:-0}" -eq 0 ]]; then
+        error "${0##*/}: empty table column information for '${arg_table_name}'"
+        exit 1
+      fi
     fi
-    warn "${0##*/}: creating new table '${arg_table_name}'" 1>&2
+    warn "${0##*/}: creating new table '${arg_table_name}'"
     if ! create_table --pk="${pk_column_name:-}" "${arg_database_file}" "${arg_table_name}" "${reconciled_column_specs}"; then
       error "${0##*/}: failed to create table: ${arg_table_name}"
       exit 1
@@ -730,7 +766,7 @@ fi
 
 if [[ "${json_file_length:-0}" -eq 0 ]]; then
   if [[ -z "${arg_insert_if_empty:-}" ]]; then
-    info "${0##*/}: empty file. skipping importing: ${json_file}" 1>&2
+    info "${0##*/}: empty file. skipping importing: ${json_file}"
     exit 0
   else
     if [[ -z "${arg_primary_key_column:-}" ]] || [[ -z "${arg_created_column:-}" ]] || [[ -z "${arg_updated_column:-}" ]] || [[ -z "${arg_deleted_column:-}" ]]; then
