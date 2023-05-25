@@ -4,9 +4,16 @@ A utility script to convert JSON objects into SQLite3 records.
 
 # Setup
 
-* `bash`
+* `bash (>= 3)`
 * `jq`
 * `sqlite3 (>= 3.38.0)`
+
+You can also install it via [Homebrew](https://brew.sh/) like follows.
+
+```sh
+% brew tap yyuu/json2sqlite3 https://github.com/yyuu/json2sqlite3
+% brew install yyuu/json2sqlite3/json2sqlite3
+```
 
 # Usage
 

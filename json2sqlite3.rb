@@ -1,7 +1,9 @@
 require 'formula'
 
 class Json2sqlite3 < Formula
+  VERSION = '0.20230525.1'
   homepage 'https://github.com/yyuu/json2sqlite3'
+  url 'https://github.com/yyuu/json2sqlite3.git', tag: "v#{VERSION}"
   head 'https://github.com/yyuu/json2sqlite3.git', branch: "main"
 
   depends_on "bash"
@@ -11,9 +13,9 @@ class Json2sqlite3 < Formula
 
   def install
     if build.head?
-      system "make PREFIX=#{prefix} install"
+      system "make PREFIX=#{prefix} VERSION=HEAD install"
     else
-      abort("only HEAD installation is supported")
+      system "make PREFIX=#{prefix} VERSION=#{VERSION} install"
     end
   end
 end
