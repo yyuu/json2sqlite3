@@ -429,7 +429,7 @@ alter_table() {
   )
   runq_args+=("$(build_create_table_statement --pk="${pk:-}" "${database_file}" "${table_name}" "${new_column_specs}")")
   runq_args+=("$(build_insert_into_table_from_table_statement --insert-or-replace "${database_file}" "${table_name}" "${backup_table_name}" "${old_column_specs}")")
-  run_args+=("DROP TABLE IF EXISTS \"${backup_table_name}\";") # TODO: add an option to opt-out this...?
+  runq_args+=("DROP TABLE IF EXISTS \"${backup_table_name}\";") # TODO: add an option to opt-out this...?
   runq_args+=("COMMIT TRANSACTION;")
   runq "${database_file}" "${runq_args[@]}"
 }
