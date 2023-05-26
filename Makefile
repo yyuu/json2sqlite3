@@ -2,7 +2,7 @@
 
 PREFIX ?= /usr/local
 BIN_DIR ?= $(PREFIX)/bin
-VERSION ?= 0.20230525.1
+VERSION ?= 0.20230525.2
 
 all: build
 
