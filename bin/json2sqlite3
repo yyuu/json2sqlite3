@@ -472,6 +472,7 @@ arg_updated_column=
 while [[ $# -gt 0 ]]; do
   case "${1:-}" in
   "--" )
+    shift 1
     break
     ;;
   "--after-query" | "--after-query="* )
@@ -655,11 +656,11 @@ json_file_length=0
 if [[ -s "${json_file}" ]]; then
   # SQLite3's 'json' mode will produce records in array<object> schema.
   # Here this is expecting that the input data is structured in the same way.
-  json_file_type="$(jq --raw-output 'type' < "${json_file}" || true)"
+  json_file_type="$(jq --raw-output 'type' < "${json_file}" 2>/dev/null || true)"
   if [[ "${json_file_type:-}" == "array" ]]; then
-    json_file_length="$(jq --raw-output 'length' < "${json_file}" || true)"
+    json_file_length="$(jq --raw-output 'length' < "${json_file}" 2>/dev/null || true)"
   else
-    echo "${0##*/}: error: input data is not an array: ${json_file}" 1>&2
+    error "${0##*/}: unexpected input data format: json: expected=array, got=${json_file_type:-unknown}"
     exit 1
   fi
 else

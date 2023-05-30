@@ -1,4 +1,5 @@
 *.sqlite
 *.swo
 *.swp
+.envrc
 /tmp
