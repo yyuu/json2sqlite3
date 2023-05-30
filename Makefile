@@ -2,7 +2,7 @@
 
 PREFIX ?= /usr/local
 BIN_DIR ?= $(PREFIX)/bin
-VERSION ?= 0.20230525.2
+VERSION ?= $(shell git describe --tags HEAD | sed -e 's/^v//g' -e 's/[^-.0-9A-Z_a-z]/_/g')
 
 all: build
 
