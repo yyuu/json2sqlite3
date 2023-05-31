@@ -112,7 +112,7 @@ runq() {
     ppq "$@" | debug
   fi
   if [[ -z "${DRY_RUN:-}" ]]; then
-    sqlite3 "$@"
+    sqlite3 -batch "$@"
   fi
 }
 
@@ -203,7 +203,7 @@ detect_column_specs_from_json() {
           end) as $sqlite_type | [.key, $sqlite_type]
         )
     ) | if 0 < length then add[] else [] end | @csv' < "${json_file}" > "${csv_file}"
-    sqlite3 "/dev/null" \
+    sqlite3 -batch "/dev/null" \
       "CREATE TEMPORARY TABLE _s1 (name TEXT, type TEXT);" \
       "CREATE TEMPORARY TABLE s1 (cid INTEGER PRIMARY KEY, name TEXT, type TEXT);" \
       "CREATE UNIQUE INDEX s1_name ON s1 (name);" \
@@ -218,7 +218,7 @@ detect_column_specs_from_json() {
 detect_column_specs_from_table() {
   local database_file="$1"
   local table_name="$2"
-  sqlite3 "${database_file}" \
+  sqlite3 -batch "${database_file}" \
     ".parameter set @table_name '${table_name}'" \
     "SELECT json_group_array(json_object('cid', cid, 'name', name, 'type', type, 'notnull', \"notnull\", 'dflt_value', dflt_value, 'pk', pk)) FROM pragma_table_info(@table_name) ORDER BY cid;"
 }
@@ -328,7 +328,7 @@ reconcile_column_specs3() {
   jq --raw-output 'map([.cid, .name, .type, .notnull, .dflt_value, .pk])[] | @csv' <<< "${spec1}" > "${s1}"
   jq --raw-output 'map([.cid, .name, .type, .notnull, .dflt_value, .pk])[] | @csv' <<< "${spec2}" > "${s2}"
   jq --raw-output 'map([.cid, .name, .type, .notnull, .dflt_value, .pk])[] | @csv' <<< "${spec3}" > "${s3}"
-  sqlite3 /dev/null \
+  sqlite3 -batch /dev/null \
     "CREATE TEMPORARY TABLE s1 (cid INTEGER, name TEXT, type TEXT, \"notnull\" INTEGER, dflt_value BLOB, pk INTEGER);" \
     "CREATE TEMPORARY TABLE s2 (cid INTEGER, name TEXT, type TEXT, \"notnull\" INTEGER, dflt_value BLOB, pk INTEGER);" \
     "CREATE TEMPORARY TABLE s3 (cid INTEGER, name TEXT, type TEXT, \"notnull\" INTEGER, dflt_value BLOB, pk INTEGER);" \
@@ -704,7 +704,7 @@ fi
 # managing table schema...
 table_description=""
 reconciled_column_specs='[]'
-if sqlite3 "${arg_database_file}" "SELECT 1 FROM \"${arg_table_name}\" LIMIT 1;" 1>/dev/null 2>&1; then
+if sqlite3 -batch "${arg_database_file}" "SELECT 1 FROM \"${arg_table_name}\" LIMIT 1;" 1>/dev/null 2>&1; then
   debug "${0##*/}: detected existing table. inspecting schema information..."
   current_column_specs="$(detect_column_specs_from_table "${arg_database_file}" "${arg_table_name}" || true)"
   if [[ -z "${current_column_specs:-}" ]]; then
@@ -941,7 +941,7 @@ runq_args+=(
 
 cmdout="$(mktemp "${TMPDIR}/cmdout.XXXXXXXX")"
 if runq "${arg_database_file}" "${runq_args[@]}" 1>"${cmdout}"; then
-  num_records="$(cat "${cmdout}")"
+  num_records="$(tr -d '[:cntrl:]' < "${cmdout}")" # sqlite3 may append 0x1e (Record Separator) at the end of output
   if [[ -z "${DRY_RUN:-}" ]]; then
     info "${0##*/}: imported ${num_records:-0} record(s) into '${arg_table_name}' table (${table_description:-n/a})."
   else
