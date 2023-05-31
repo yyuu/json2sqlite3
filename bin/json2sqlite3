@@ -941,7 +941,7 @@ runq_args+=(
 
 cmdout="$(mktemp "${TMPDIR}/cmdout.XXXXXXXX")"
 if runq "${arg_database_file}" "${runq_args[@]}" 1>"${cmdout}"; then
-  num_records="$(tr -d '[[:cntrl:]]' < "${cmdout}")" # sqlite3 may append 0x1e (Record Separator) at the end of output
+  num_records="$(tr -d '[:cntrl:]' < "${cmdout}")" # sqlite3 may append 0x1e (Record Separator) at the end of output
   if [[ -z "${DRY_RUN:-}" ]]; then
     info "${0##*/}: imported ${num_records:-0} record(s) into '${arg_table_name}' table (${table_description:-n/a})."
   else
