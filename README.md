@@ -4,11 +4,21 @@ A utility script to convert JSON objects into SQLite3 records.
 
 # Setup
 
+You need to have the following tools to be available in your `$PATH`.
+
 * `bash (>= 3)`
 * `jq`
 * `sqlite3 (>= 3.38.0)`
 
-You can also install it via [Homebrew](https://brew.sh/) like follows.
+## Installation
+
+Just `make install` with custom `PREFIX` if you prefer.
+
+```sh
+% make PREFIX=/path/to/somewhere install
+```
+
+You can also install via [Homebrew](https://brew.sh/) like follows.
 
 ```sh
 % brew tap yyuu/json2sqlite3 https://github.com/yyuu/json2sqlite3
