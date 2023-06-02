@@ -80,9 +80,26 @@ validate_ident() {
   local ident
   for ident in "$@"; do
     if [[ ! "${ident:-}" =~ ^[A-Z_a-z][0-9A-Z_a-z]*$ ]]; then
-      warn "${0##*/}: invalid identifier for sqlite3 table/column name: \"${ident:-}\""
-      return 1
+      error "${0##*/}: invalid identifier for sqlite3 table/column name: \"${ident:-}\""
+      exit 1
     fi
+  done
+}
+
+validate_type() {
+  local ident
+  for ident in "$@"; do
+    case "$(tr '[:lower:]' '[:upper:]' <<< "${ident:-}")" in
+    "BLOB" ) :;;
+    "NUMERIC" | "NUM" ) :;;
+    "INTEGER" | "INT" ) :;;
+    "REAL" ) :;;
+    "TEXT" | "JSON" ) :;;
+    * )
+      error "${0##*/}: unsupported SQLite3 data type: ${ident:-}" 1>&2
+      exit 1
+      ;;
+    esac
   done
 }
 
@@ -247,6 +264,7 @@ build_create_table_statement() {
   local _columns=()
   while IFS='' read -r _column; do
     validate_ident "${_column%%:*}"
+    validate_type "${_column#*:}"
     _columns+=("${_column}")
   done < <(jq --raw-output 'map("\(.name):\(.type)")[]' <<< "${create_table_specs}")
   if [[ ${#_columns[@]} -eq 0 ]]; then
@@ -257,6 +275,7 @@ build_create_table_statement() {
       column_name="${_column%%:*}"
       column_type="${_column#*:}"
       validate_ident "${column_name}"
+      validate_type "${column_type}"
       if [[ "${column_name}" == "${pk:-}" ]]; then
         column_type+=" PRIMARY KEY"
       fi
@@ -292,6 +311,7 @@ build_insert_into_table_from_table_statement() {
   local _columns=()
   while IFS='' read -r _column; do
     validate_ident "${_column%%:*}"
+    validate_type "${_column#*:}"
     _columns+=("${_column}")
   done < <(jq --raw-output 'map("\(.name):\(.type)")[]' <<< "${table_column_specs}")
   if [[ ${#_columns[*]} -eq 0 ]]; then
@@ -342,41 +362,52 @@ reconcile_column_specs3() {
         name
       FROM
         s1
+      WHERE
+        name IS NOT NULL AND name != ''
       UNION SELECT
         name
       FROM
         s2
+      WHERE
+        name IS NOT NULL AND name != ''
       UNION SELECT
         name
       FROM
         s3
+      WHERE
+        name IS NOT NULL AND name != ''
     ), s0 AS (
       SELECT
         ( CASE
           WHEN s1.cid IS NOT NULL THEN s1.cid
           WHEN s2.cid IS NOT NULL THEN s2.cid + ( SELECT COUNT(1) FROM s1 )
-          ELSE s3.cid + ( SELECT COUNT(1) FROM s1 ) + ( SELECT COUNT(1) FROM s2 )
+          WHEN s3.cid IS NOT NULL THEN s3.cid + ( SELECT COUNT(1) FROM s1 ) + ( SELECT COUNT(1) FROM s2 )
+          ELSE ( SELECT COUNT(1) FROM s1 ) + ( SELECT COUNT(1) FROM s2 ) + ( SELECT COUNT(1) FROM s3 )
           END ) AS cid,
         names.name,
         ( CASE
-          WHEN s1.type IS NOT NULL THEN s1.type
-          WHEN s2.type IS NOT NULL THEN s2.type
-          ELSE s3.type
+          WHEN s1.type IS NOT NULL AND s1.type != '' THEN s1.type
+          WHEN s2.type IS NOT NULL AND s2.type != '' THEN s2.type
+          WHEN s3.type IS NOT NULL AND s3.type != '' THEN s3.type
+          ELSE 'JSON'
           END ) AS type,
         ( CASE
           WHEN s1.\"notnull\" IS NOT NULL THEN s1.\"notnull\"
           WHEN s2.\"notnull\" IS NOT NULL THEN s2.\"notnull\"
-          ELSE s3.\"notnull\"
+          WHEN s3.\"notnull\" IS NOT NULL THEN s3.\"notnull\"
+          ELSE FALSE
           END ) AS \"notnull\",
         ( CASE
           WHEN s1.dflt_value IS NOT NULL THEN s1.dflt_value
           WHEN s2.dflt_value IS NOT NULL THEN s2.dflt_value
-          ELSE s3.dflt_value
+          WHEN s3.dflt_value IS NOT NULL THEN s3.dflt_value
+          ELSE NULL
           END ) AS dflt_value,
         ( CASE
           WHEN s1.pk IS NOT NULL THEN s1.pk
           WHEN s2.pk IS NOT NULL THEN s2.pk
-          ELSE s3.pk
+          WHEN s3.pk IS NOT NULL THEN s3.pk
+          ELSE FALSE
           END ) AS pk
       FROM
         names
@@ -675,6 +706,7 @@ if [[ -z "${arg_primary_key_column:-}" ]]; then
 else
   pk_column_name="${arg_primary_key_column%%:*}" # extract type info
   validate_ident "${pk_column_name}"
+  validate_type "${arg_primary_key_column#*:}"
 fi
 
 # read json from remainder of command line arguments, or standard input
@@ -812,6 +844,7 @@ if [[ "${json_file_length:-0}" -eq 0 ]]; then
       exit 1
     fi
     validate_ident "${arg_primary_key_column%%:*}" "${arg_created_column%%:*}" "${arg_updated_column%%:*}" "${arg_deleted_column%%:*}"
+    validate_type "${arg_primary_key_column#*:}" "${arg_created_column#*:}" "${arg_updated_column#*:}" "${arg_deleted_column#*:}"
     info "${0##*/}: empty file. attempt inserting negative cache record: ${arg_table_name}: ${pk_column_name}=${arg_insert_if_empty}" 1>&2
     runq "${arg_database_file}" \
       ".parameter set @arg_insert_if_empty '${arg_insert_if_empty}'" \
@@ -846,12 +879,12 @@ if ! jq --argjson current_column_specs "${current_column_specs:-[]}" --raw-outpu
     . as $item |
     $current_column_specs | map(
       .name as $column_name |
-      .type as $column_type |
+        (.type | ascii_upcase) as $column_type |
       if ("BLOB" == $column_type) then
         $item[$column_name]
-      elif ("NUMERIC" == $column_type) then
+      elif ("NUMERIC" == $column_type or "NUM" == $column_type) then
         $item[$column_name]
-      elif ("INTEGER" == $column_type) then
+      elif ("INTEGER" == $column_type or "INT" == $column_type) then
         $item[$column_name]
       elif ("JSON" == $column_type) then
         ($item[$column_name] | tojson)
@@ -860,7 +893,7 @@ if ! jq --argjson current_column_specs "${current_column_specs:-[]}" --raw-outpu
       elif ("TEXT" == $column_type) then
         $item[$column_name]
       else
-        error("unsupported SQLite column data type: \($column_name):\($column_type)")
+        error("unsupported SQLite data type: \($column_name):\($column_type)")
       end
     )
   )[] | @csv' < "${json_file}" > "${csv_file}"; then
@@ -897,6 +930,7 @@ if [[ -n "${arg_preserve_created:-}" ]]; then
     exit 1
   fi
   validate_ident "${arg_primary_key_column%%:*}" "${arg_created_column%%:*}"
+  validate_type "${arg_primary_key_column#*:}" "${arg_created_column#*:}"
   runq_args+=( \
 "UPDATE
   \"${import_table_name}\"
@@ -917,6 +951,7 @@ if [[ -n "${arg_soft_delete:-}" ]]; then
     exit 1
   fi
   validate_ident "${arg_primary_key_column%%:*}" "${arg_deleted_column%%:*}"
+  validate_type "${arg_primary_key_column#*:}" "${arg_deleted_column#*:}"
   runq_args+=( \
 "UPDATE
   \"${arg_table_name}\"
