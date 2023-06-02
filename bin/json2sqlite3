@@ -90,12 +90,11 @@ validate_type() {
   local ident
   for ident in "$@"; do
     case "$(tr '[:lower:]' '[:upper:]' <<< "${ident:-}")" in
-    "BLOB" )    :;;
-    "NUMERIC" ) :;;
-    "INTEGER" ) :;;
-    "JSON" )    :;;
-    "REAL" )    :;;
-    "TEXT" )    :;;
+    "BLOB" ) :;;
+    "NUMERIC" | "NUM" ) :;;
+    "INTEGER" | "INT" ) :;;
+    "REAL" ) :;;
+    "TEXT" | "JSON" ) :;;
     * )
       error "${0##*/}: unsupported SQLite3 data type: ${ident:-}" 1>&2
       exit 1
@@ -883,9 +882,9 @@ if ! jq --argjson current_column_specs "${current_column_specs:-[]}" --raw-outpu
         (.type | ascii_upcase) as $column_type |
       if ("BLOB" == $column_type) then
         $item[$column_name]
-      elif ("NUMERIC" == $column_type) then
+      elif ("NUMERIC" == $column_type or "NUM" == $column_type) then
         $item[$column_name]
-      elif ("INTEGER" == $column_type) then
+      elif ("INTEGER" == $column_type or "INT" == $column_type) then
         $item[$column_name]
       elif ("JSON" == $column_type) then
         ($item[$column_name] | tojson)
