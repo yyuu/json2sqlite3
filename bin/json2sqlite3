@@ -885,7 +885,15 @@ if ! jq --argjson current_column_specs "${current_column_specs:-[]}" --raw-outpu
       elif ("NUMERIC" == $column_type or "NUM" == $column_type) then
         $item[$column_name]
       elif ("INTEGER" == $column_type or "INT" == $column_type) then
-        $item[$column_name]
+        if ($item[$column_name] | type == "boolean") then
+          if $item[$column_name] then
+            1
+          else
+            0
+          end
+        else
+          $item[$column_name]
+        end
       elif ("JSON" == $column_type) then
         ($item[$column_name] | tojson)
       elif ("REAL" == $column_type) then
