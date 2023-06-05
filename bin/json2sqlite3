@@ -326,7 +326,16 @@ build_insert_into_table_from_table_statement() {
     stmt+=$'\n) SELECT'
     for _column in "${_columns[@]}"; do
       stmt+=$'\n'
-      stmt+="  \"${_column%%:*}\","
+      #
+      # Converting internal representation of NULL into SQLite3 NULL.
+      # SQLite3's `.import` doesn't support importing NULL values from CSV, but replaces them with empty strings.
+      # This is a workaround to import NULL values from CSV by utilizing internal representation w/ magic bytes.
+      #
+      # See:
+      # * https://sqlite.org/forum/info/cf99368fe4c4512e
+      # * https://stackoverflow.com/questions/36774228/sqlite3-how-to-import-null-values-from-csv
+      #
+      stmt+="  ( CASE WHEN \"${_column%%:*}\" = (char(0xde, 0xad, 0xbe, 0xef) || 'NULL') THEN NULL ELSE \"${_column%%:*}\" END ),"
     done
     stmt="${stmt%,}"
     stmt+=$'\nFROM\n'
@@ -885,9 +894,21 @@ if ! jq --argjson current_column_specs "${current_column_specs:-[]}" --raw-outpu
       elif ("NUMERIC" == $column_type or "NUM" == $column_type) then
         $item[$column_name]
       elif ("INTEGER" == $column_type or "INT" == $column_type) then
-        $item[$column_name]
+        if ($item[$column_name] | type == "boolean") then
+          if $item[$column_name] then
+            1
+          else
+            0
+          end
+        else
+          $item[$column_name]
+        end
       elif ("JSON" == $column_type) then
-        ($item[$column_name] | tojson)
+        if ($item[$column_name] | type == "null") then
+          "\u00de\u00ad\u00be\u00efNULL" # converting JSON null into internal representation of NULL (w/ magic bytes) to insert SQLite3 NULL from CSV...
+        else
+          ($item[$column_name] | tojson)
+        end
       elif ("REAL" == $column_type) then
         $item[$column_name]
       elif ("TEXT" == $column_type) then
