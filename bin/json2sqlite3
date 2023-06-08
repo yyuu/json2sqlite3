@@ -876,7 +876,7 @@ if [[ "${json_file_length:-0}" -eq 0 ]]; then
          \"${arg_deleted_column%%:*}\" = cast(strftime('%s') AS ${arg_deleted_column#*:})
        WHERE
          \"${arg_primary_key_column%%:*}\" = @arg_insert_if_empty;" \
-      "COMMIT TRANSACTION;" 2>/dev/null || true
+      "COMMIT TRANSACTION;" || true
     exit 0
   fi
 fi
