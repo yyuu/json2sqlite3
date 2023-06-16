@@ -931,17 +931,25 @@ fi
 # Avoid importing records directly into the destination table to utilize `INSERT OR REPLACE`.
 # Otherwise the import will be failing if there is some conflicting records in importing data.
 #
-runq_args=(
-  "$(build_create_table_statement --temporary "${arg_database_file}" "${import_table_name}" "${current_column_specs}")"
-  ".mode csv"
-  ".import '${csv_file}' ${import_table_name}"
-  ".mode ascii"
-  "BEGIN TRANSACTION;"
+runq_args=( \
+  "$(build_create_table_statement --temporary "${arg_database_file}" "${import_table_name}" "${current_column_specs}")" \
+  ".parameter set @program_name '${0##*/}'" \
+  ".parameter set @arg_table_name '${arg_table_name}'" \
+  ".parameter set @table_description '${table_description:-n/a}'" \
+  ".mode csv" \
+  ".import '${csv_file}' ${import_table_name}" \
+  ".mode ascii" \
+  "BEGIN TRANSACTION;" \
 )
 
 if [[ ${#arg_before_queries[@]} -gt 0 ]]; then
+  i=1
   for q in "${arg_before_queries[@]}"; do
-    runq_args+=("${q}")
+    runq_args+=( \
+      "${q}" \
+      "SELECT @program_name || ': mutated ' || changes() || ' record(s) on before-query#${i}.';" \
+    )
+    i=$((i+1))
   done
 fi
 
@@ -961,10 +969,14 @@ FROM
   \"${arg_table_name}\"
 WHERE
   \"${import_table_name}\".\"${arg_primary_key_column%%:*}\" = \"${arg_table_name}\".\"${arg_primary_key_column%%:*}\";" \
+"SELECT @program_name || ': updated ' || changes() || ' record(s) on preserve-created.';" \
 )
 fi
 
-runq_args+=("$(build_insert_into_table_from_table_statement --insert-or-replace "${arg_database_file}" "${arg_table_name}" "${import_table_name}" "${current_column_specs}")")
+runq_args+=("
+  $(build_insert_into_table_from_table_statement --insert-or-replace "${arg_database_file}" "${arg_table_name}" "${import_table_name}" "${current_column_specs}")"
+  "SELECT @program_name || ': imported ' || changes() || ' record(s) into ''' || @arg_table_name || ''' table (' || @table_description || ').';"
+)
 
 if [[ -n "${arg_soft_delete:-}" ]]; then
   if [[ -z "${arg_primary_key_column:-}" ]] || [[ -z "${arg_deleted_column:-}" ]]; then
@@ -981,27 +993,32 @@ SET
 WHERE
   \"${arg_deleted_column%%:*}\" < 0
   AND \"${arg_primary_key_column%%:*}\" NOT IN ( SELECT \"${arg_primary_key_column%%:*}\" FROM \"${import_table_name}\" );" \
+"SELECT @program_name || ': updated ' || changes() || ' record(s) on soft-delete.';" \
 )
 fi
 
 if [[ ${#arg_after_queries[*]} -gt 0 ]]; then
+  i=1
   for q in "${arg_after_queries[@]}"; do
-    runq_args+=("${q}")
+    runq_args+=( \
+      "${q}" \
+      "SELECT @program_name || ': mutated ' || changes() || ' record(s) on after-query#${i}.';" \
+    )
+    i=$((i+1))
   done
 fi
 
 runq_args+=(
   "COMMIT TRANSACTION;"
-  "SELECT COUNT(1) FROM \"${import_table_name}\";" # count up the number of imported records
 )
 
 cmdout="$(mktemp "${TMPDIR}/cmdout.XXXXXXXX")"
 if runq "${arg_database_file}" "${runq_args[@]}" 1>"${cmdout}"; then
-  num_records="$(tr -d '[:cntrl:]' < "${cmdout}")" # sqlite3 may append 0x1e (Record Separator) at the end of output
+  # sqlite3 will render 0x1e (Record Separator) in between outputs
   if [[ -z "${DRY_RUN:-}" ]]; then
-    info "${0##*/}: imported ${num_records:-0} record(s) into '${arg_table_name}' table (${table_description:-n/a})."
+    tr '\036' '\n' < "${cmdout}" | info
   else
-    info "${0##*/}: imported ${num_records:-0} record(s) into '${arg_table_name}' table (${table_description:-n/a}) (dry-run)."
+    info "${0##*/}: imported 0 record(s) into '${arg_table_name}' table (${table_description:-n/a}) (dry-run)."
   fi
 else
   { echo "${0##*/}: failed to insert records into '${arg_table_name}' table (${table_description:-n/a})"
