@@ -947,7 +947,7 @@ if [[ ${#arg_before_queries[@]} -gt 0 ]]; then
   for q in "${arg_before_queries[@]}"; do
     runq_args+=( \
       "${q}" \
-      "SELECT @program_name || ': mutated ' || changes() || ' record(s) on before-query#${i}.';" \
+      "SELECT @program_name || ': mutated ' || changes() || ' record(s) on before-query#${i}.' WHERE 0 < changes();" \
     )
     i=$((i+1))
   done
@@ -969,13 +969,13 @@ FROM
   \"${arg_table_name}\"
 WHERE
   \"${import_table_name}\".\"${arg_primary_key_column%%:*}\" = \"${arg_table_name}\".\"${arg_primary_key_column%%:*}\";" \
-"SELECT @program_name || ': updated ' || changes() || ' record(s) on preserve-created.';" \
+"SELECT @program_name || ': updated ' || changes() || ' record(s) on preserve-created.' WHERE changes();" \
 )
 fi
 
 runq_args+=("
   $(build_insert_into_table_from_table_statement --insert-or-replace "${arg_database_file}" "${arg_table_name}" "${import_table_name}" "${current_column_specs}")"
-  "SELECT @program_name || ': imported ' || changes() || ' record(s) into ''' || @arg_table_name || ''' table (' || @table_description || ').';"
+  "SELECT @program_name || ': imported ' || changes() || ' record(s) into ''' || @arg_table_name || ''' table (' || @table_description || ').' WHERE 0 < changes();"
 )
 
 if [[ -n "${arg_soft_delete:-}" ]]; then
@@ -993,7 +993,7 @@ SET
 WHERE
   \"${arg_deleted_column%%:*}\" < 0
   AND \"${arg_primary_key_column%%:*}\" NOT IN ( SELECT \"${arg_primary_key_column%%:*}\" FROM \"${import_table_name}\" );" \
-"SELECT @program_name || ': updated ' || changes() || ' record(s) on soft-delete.';" \
+"SELECT @program_name || ': updated ' || changes() || ' record(s) on soft-delete.' WHERE 0 < changes();" \
 )
 fi
 
@@ -1002,7 +1002,7 @@ if [[ ${#arg_after_queries[*]} -gt 0 ]]; then
   for q in "${arg_after_queries[@]}"; do
     runq_args+=( \
       "${q}" \
-      "SELECT @program_name || ': mutated ' || changes() || ' record(s) on after-query#${i}.';" \
+      "SELECT @program_name || ': mutated ' || changes() || ' record(s) on after-query#${i}.' WHERE 0 < changes();" \
     )
     i=$((i+1))
   done
