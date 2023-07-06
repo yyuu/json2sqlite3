@@ -881,7 +881,6 @@ if [[ "${json_file_length:-0}" -eq 0 ]]; then
   fi
 fi
 
-import_table_name="__import__${arg_table_name}"
 csv_file="$(mktemp "${TMPDIR}/csv_file.XXXXXXXX")"
 if ! jq --argjson current_column_specs "${current_column_specs:-[]}" --raw-output \
   'map(
@@ -889,32 +888,32 @@ if ! jq --argjson current_column_specs "${current_column_specs:-[]}" --raw-outpu
     $current_column_specs | map(
       .name as $column_name |
         (.type | ascii_upcase) as $column_type |
-      if ("BLOB" == $column_type) then
-        $item[$column_name]
-      elif ("NUMERIC" == $column_type or "NUM" == $column_type) then
-        $item[$column_name]
-      elif ("INTEGER" == $column_type or "INT" == $column_type) then
-        if ($item[$column_name] | type == "boolean") then
-          if $item[$column_name] then
-            1
-          else
-            0
-          end
-        else
-          $item[$column_name]
-        end
-      elif ("JSON" == $column_type) then
-        if ($item[$column_name] | type == "null") then
-          "\u00de\u00ad\u00be\u00efNULL" # converting JSON null into internal representation of NULL (w/ magic bytes) to insert SQLite3 NULL from CSV...
-        else
-          ($item[$column_name] | tojson)
-        end
-      elif ("REAL" == $column_type) then
-        $item[$column_name]
-      elif ("TEXT" == $column_type) then
-        $item[$column_name]
+      if ($item[$column_name] | type == "null") then
+        "\u00de\u00ad\u00be\u00efNULL" # converting JSON null into internal representation of NULL (w/ magic bytes) to insert SQLite3 NULL from CSV...
       else
-        error("unsupported SQLite data type: \($column_name):\($column_type)")
+        if ("BLOB" == $column_type) then
+          $item[$column_name]
+        elif ("NUMERIC" == $column_type or "NUM" == $column_type) then
+          $item[$column_name]
+        elif ("INTEGER" == $column_type or "INT" == $column_type) then
+          if ($item[$column_name] | type == "boolean") then
+            if $item[$column_name] then
+              1
+            else
+              0
+            end
+          else
+            $item[$column_name]
+          end
+        elif ("JSON" == $column_type) then
+          ($item[$column_name] | tojson)
+        elif ("REAL" == $column_type) then
+          $item[$column_name]
+        elif ("TEXT" == $column_type) then
+          $item[$column_name]
+        else
+          error("unsupported SQLite data type: \($column_name):\($column_type)")
+        end
       end
     )
   )[] | @csv' < "${json_file}" > "${csv_file}"; then
@@ -931,6 +930,7 @@ fi
 # Avoid importing records directly into the destination table to utilize `INSERT OR REPLACE`.
 # Otherwise the import will be failing if there is some conflicting records in importing data.
 #
+import_table_name="__import__${arg_table_name}"
 runq_args=( \
   "$(build_create_table_statement --temporary "${arg_database_file}" "${import_table_name}" "${current_column_specs}")" \
   ".parameter set @program_name '${0##*/}'" \
