@@ -511,6 +511,7 @@ arg_create_table=1
 arg_created_column=
 arg_database_file=
 arg_deleted_column=
+arg_dump_intermediate_csv=
 arg_insert_if_empty=
 arg_json_files=()
 arg_preserve_created=
@@ -585,6 +586,14 @@ while [[ $# -gt 0 ]]; do
     ;;
   "--dry-run" ) # usage: enable dry-run mode
     DRY_RUN=1
+    ;;
+  "--dump-intermediate-csv" | "--dump-intermediate-csv="* ) # usage: dump intermediate CSV at given filename
+    if [[ "$1" == *"="* ]]; then
+      arg_dump_intermediate_csv="${1#*=}"
+    else
+      arg_dump_intermediate_csv="${2:-}"
+      shift 1
+    fi
     ;;
   "--generic-column" | "--generic-column="* ) # usage: specify generic column. you also can specify column type (e.g. foo:TEXT)
     if [[ "$1" == *"="* ]]; then
@@ -892,7 +901,7 @@ if [[ "${json_file_length:-0}" -eq 0 ]]; then
 fi
 
 csv_file="$(mktemp "${TMPDIR}/csv_file.XXXXXXXX")"
-if ! jq --argjson current_column_specs "${current_column_specs:-[]}" --raw-output \
+if jq --argjson current_column_specs "${current_column_specs:-[]}" --raw-output \
   'map(
     . as $item |
     $current_column_specs | map(
@@ -927,6 +936,14 @@ if ! jq --argjson current_column_specs "${current_column_specs:-[]}" --raw-outpu
       end
     )
   )[] | @csv' < "${json_file}" > "${csv_file}"; then
+  if [[ -z "${arg_dump_intermediate_csv:-}" ]]; then
+    :
+  else
+    { jq --raw-output 'map("\(.name):\(.type)") | @csv' <<< "${current_column_specs:-[]}"
+      cat "${csv_file}"
+    } > "${arg_dump_intermediate_csv}"
+  fi
+else
   { echo "${0##*/}: failed to convert records into CSV format"
     echo
     echo "JSON:"
