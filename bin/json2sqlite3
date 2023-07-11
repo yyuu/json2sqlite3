@@ -8,6 +8,9 @@ TMPDIR="$(mktemp -d)"
 VERSION="@@VERSION@@"
 VERBOSITY=2
 
+# set timeout as 60 seconds to work around with "database is locked" error
+SQLITE_BUSY_TIMEOUT="${SQLITE_BUSY_TIMEOUT:-60000}"
+
 on_exit() {
   rm -fr "${TMPDIR}"
 }
@@ -80,7 +83,7 @@ validate_ident() {
   local ident
   for ident in "$@"; do
     if [[ ! "${ident:-}" =~ ^[A-Z_a-z][0-9A-Z_a-z]*$ ]]; then
-      error "${0##*/}: invalid identifier for sqlite3 table/column name: \"${ident:-}\""
+      error "${0##*/}: invalid identifier for SQLite3 table/column name: \"${ident:-}\""
       exit 1
     fi
   done
@@ -221,6 +224,7 @@ detect_column_specs_from_json() {
         )
     ) | if 0 < length then add[] else [] end | @csv' < "${json_file}" > "${csv_file}"
     sqlite3 -batch "/dev/null" \
+      ".timeout ${SQLITE_BUSY_TIMEOUT}" \
       "CREATE TEMPORARY TABLE _s1 (name TEXT, type TEXT);" \
       "CREATE TEMPORARY TABLE s1 (cid INTEGER PRIMARY KEY, name TEXT, type TEXT);" \
       "CREATE UNIQUE INDEX s1_name ON s1 (name);" \
@@ -236,6 +240,7 @@ detect_column_specs_from_table() {
   local database_file="$1"
   local table_name="$2"
   sqlite3 -batch "${database_file}" \
+    ".timeout ${SQLITE_BUSY_TIMEOUT}" \
     ".parameter set @table_name '${table_name}'" \
     "SELECT json_group_array(json_object('cid', cid, 'name', name, 'type', type, 'notnull', \"notnull\", 'dflt_value', dflt_value, 'pk', pk)) FROM pragma_table_info(@table_name) ORDER BY cid;"
 }
@@ -358,6 +363,7 @@ reconcile_column_specs3() {
   jq --raw-output 'map([.cid, .name, .type, .notnull, .dflt_value, .pk])[] | @csv' <<< "${spec2}" > "${s2}"
   jq --raw-output 'map([.cid, .name, .type, .notnull, .dflt_value, .pk])[] | @csv' <<< "${spec3}" > "${s3}"
   sqlite3 -batch /dev/null \
+    ".timeout ${SQLITE_BUSY_TIMEOUT}" \
     "CREATE TEMPORARY TABLE s1 (cid INTEGER, name TEXT, type TEXT, \"notnull\" INTEGER, dflt_value BLOB, pk INTEGER);" \
     "CREATE TEMPORARY TABLE s2 (cid INTEGER, name TEXT, type TEXT, \"notnull\" INTEGER, dflt_value BLOB, pk INTEGER);" \
     "CREATE TEMPORARY TABLE s3 (cid INTEGER, name TEXT, type TEXT, \"notnull\" INTEGER, dflt_value BLOB, pk INTEGER);" \
@@ -462,10 +468,11 @@ alter_table() {
 
   local backup_table_name
   backup_table_name="__backup$(date '+%s')__${table_name}"
-  runq_args=(
-    "BEGIN TRANSACTION;"
-    "DROP TABLE IF EXISTS \"${backup_table_name}\";"
-    "ALTER TABLE \"${table_name}\" RENAME TO \"${backup_table_name}\";"
+  runq_args=( \
+    ".timeout ${SQLITE_BUSY_TIMEOUT}" \
+    "BEGIN TRANSACTION;" \
+    "DROP TABLE IF EXISTS \"${backup_table_name}\";" \
+    "ALTER TABLE \"${table_name}\" RENAME TO \"${backup_table_name}\";" \
   )
   runq_args+=("$(build_create_table_statement --pk="${pk:-}" "${database_file}" "${table_name}" "${new_column_specs}")")
   runq_args+=("$(build_insert_into_table_from_table_statement --insert-or-replace "${database_file}" "${table_name}" "${backup_table_name}" "${old_column_specs}")")
@@ -491,7 +498,9 @@ create_table() {
   if [[ -z "${stmt:-}" ]]; then
     return 1
   fi
-  runq "${database_file}" "${stmt}"
+  runq "${database_file}" \
+    ".timeout ${SQLITE_BUSY_TIMEOUT}" \
+    "${stmt}"
 }
 
 arg_after_queries=()
@@ -745,7 +754,7 @@ fi
 # managing table schema...
 table_description=""
 reconciled_column_specs='[]'
-if sqlite3 -batch "${arg_database_file}" "SELECT 1 FROM \"${arg_table_name}\" LIMIT 1;" 1>/dev/null 2>&1; then
+if sqlite3 -batch "${arg_database_file}" ".timeout ${SQLITE_BUSY_TIMEOUT}" "SELECT 1 FROM \"${arg_table_name}\" LIMIT 1;" 1>/dev/null 2>&1; then
   debug "${0##*/}: detected existing table. inspecting schema information..."
   current_column_specs="$(detect_column_specs_from_table "${arg_database_file}" "${arg_table_name}" || true)"
   if [[ -z "${current_column_specs:-}" ]]; then
@@ -856,6 +865,7 @@ if [[ "${json_file_length:-0}" -eq 0 ]]; then
     validate_type "${arg_primary_key_column#*:}" "${arg_created_column#*:}" "${arg_updated_column#*:}" "${arg_deleted_column#*:}"
     info "${0##*/}: empty file. attempt inserting negative cache record: ${arg_table_name}: ${pk_column_name}=${arg_insert_if_empty}" 1>&2
     runq "${arg_database_file}" \
+      ".timeout ${SQLITE_BUSY_TIMEOUT}" \
       ".parameter set @arg_insert_if_empty '${arg_insert_if_empty}'" \
       "BEGIN TRANSACTION;" \
       "INSERT OR IGNORE INTO \"${arg_table_name}\" (
@@ -932,6 +942,7 @@ fi
 #
 import_table_name="__import__${arg_table_name}"
 runq_args=( \
+  ".timeout ${SQLITE_BUSY_TIMEOUT}" \
   "$(build_create_table_statement --temporary "${arg_database_file}" "${import_table_name}" "${current_column_specs}")" \
   ".parameter set @program_name '${0##*/}'" \
   ".parameter set @arg_table_name '${arg_table_name}'" \
@@ -973,9 +984,9 @@ WHERE
 )
 fi
 
-runq_args+=("
-  $(build_insert_into_table_from_table_statement --insert-or-replace "${arg_database_file}" "${arg_table_name}" "${import_table_name}" "${current_column_specs}")"
-  "SELECT @program_name || ': imported ' || changes() || ' record(s) into ''' || @arg_table_name || ''' table (' || @table_description || ').' WHERE 0 < changes();"
+runq_args+=( \
+  "$(build_insert_into_table_from_table_statement --insert-or-replace "${arg_database_file}" "${arg_table_name}" "${import_table_name}" "${current_column_specs}")" \
+  "SELECT @program_name || ': imported ' || changes() || ' record(s) into ''' || @arg_table_name || ''' table (' || @table_description || ').' WHERE 0 < changes();" \
 )
 
 if [[ -n "${arg_soft_delete:-}" ]]; then
@@ -1008,13 +1019,13 @@ if [[ ${#arg_after_queries[*]} -gt 0 ]]; then
   done
 fi
 
-runq_args+=(
-  "COMMIT TRANSACTION;"
+runq_args+=( \
+  "COMMIT TRANSACTION;" \
 )
 
 cmdout="$(mktemp "${TMPDIR}/cmdout.XXXXXXXX")"
 if runq "${arg_database_file}" "${runq_args[@]}" 1>"${cmdout}"; then
-  # sqlite3 will render 0x1e (Record Separator) in between outputs
+  # SQLite3 will render 0x1e (Record Separator) in between outputs
   if [[ -z "${DRY_RUN:-}" ]]; then
     tr '\036' '\n' < "${cmdout}" | info
   else
