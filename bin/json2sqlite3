@@ -224,13 +224,14 @@ detect_column_specs_from_json() {
         )
     ) | if 0 < length then add[] else [] end | @csv' < "${json_file}" > "${csv_file}"
     sqlite3 -batch "/dev/null" \
+      ".mode list" \
       ".timeout ${SQLITE_BUSY_TIMEOUT}" \
       "CREATE TEMPORARY TABLE _s1 (name TEXT, type TEXT);" \
       "CREATE TEMPORARY TABLE s1 (cid INTEGER PRIMARY KEY, name TEXT, type TEXT);" \
       "CREATE UNIQUE INDEX s1_name ON s1 (name);" \
       ".mode csv" \
       ".import '${csv_file}' _s1" \
-      ".mode ascii" \
+      ".mode list" \
       "INSERT OR IGNORE INTO s1 (name, type) SELECT name, type FROM _s1 WHERE 0 < length(name);" \
       "SELECT json_group_array(json_object('cid', cid, 'name', name, 'type', type, 'notnull', FALSE, 'dflt_value', NULL, 'pk', FALSE)) FROM s1 ORDER BY cid;"
   fi
@@ -240,6 +241,7 @@ detect_column_specs_from_table() {
   local database_file="$1"
   local table_name="$2"
   sqlite3 -batch "${database_file}" \
+    ".mode list" \
     ".timeout ${SQLITE_BUSY_TIMEOUT}" \
     ".parameter set @table_name '${table_name}'" \
     "SELECT json_group_array(json_object('cid', cid, 'name', name, 'type', type, 'notnull', \"notnull\", 'dflt_value', dflt_value, 'pk', pk)) FROM pragma_table_info(@table_name) ORDER BY cid;"
@@ -363,6 +365,7 @@ reconcile_column_specs3() {
   jq --raw-output 'map([.cid, .name, .type, .notnull, .dflt_value, .pk])[] | @csv' <<< "${spec2}" > "${s2}"
   jq --raw-output 'map([.cid, .name, .type, .notnull, .dflt_value, .pk])[] | @csv' <<< "${spec3}" > "${s3}"
   sqlite3 -batch /dev/null \
+    ".mode list" \
     ".timeout ${SQLITE_BUSY_TIMEOUT}" \
     "CREATE TEMPORARY TABLE s1 (cid INTEGER, name TEXT, type TEXT, \"notnull\" INTEGER, dflt_value BLOB, pk INTEGER);" \
     "CREATE TEMPORARY TABLE s2 (cid INTEGER, name TEXT, type TEXT, \"notnull\" INTEGER, dflt_value BLOB, pk INTEGER);" \
@@ -371,7 +374,7 @@ reconcile_column_specs3() {
     ".import '${s1}' s1" \
     ".import '${s2}' s2" \
     ".import '${s3}' s3" \
-    ".mode ascii" \
+    ".mode list" \
     "WITH names AS (
       SELECT
         name
@@ -469,6 +472,7 @@ alter_table() {
   local backup_table_name
   backup_table_name="__backup$(date '+%s')__${table_name}"
   runq_args=( \
+    ".mode list" \
     ".timeout ${SQLITE_BUSY_TIMEOUT}" \
     "BEGIN TRANSACTION;" \
     "DROP TABLE IF EXISTS \"${backup_table_name}\";" \
@@ -499,6 +503,7 @@ create_table() {
     return 1
   fi
   runq "${database_file}" \
+    ".mode list" \
     ".timeout ${SQLITE_BUSY_TIMEOUT}" \
     "${stmt}"
 }
@@ -763,7 +768,7 @@ fi
 # managing table schema...
 table_description=""
 reconciled_column_specs='[]'
-if sqlite3 -batch "${arg_database_file}" ".timeout ${SQLITE_BUSY_TIMEOUT}" "SELECT 1 FROM \"${arg_table_name}\" LIMIT 1;" 1>/dev/null 2>&1; then
+if sqlite3 -batch "${arg_database_file}" ".mode list" ".timeout ${SQLITE_BUSY_TIMEOUT}" "SELECT 1 FROM \"${arg_table_name}\" LIMIT 1;" 1>/dev/null 2>&1; then
   debug "${0##*/}: detected existing table. inspecting schema information..."
   current_column_specs="$(detect_column_specs_from_table "${arg_database_file}" "${arg_table_name}" || true)"
   if [[ -z "${current_column_specs:-}" ]]; then
@@ -874,6 +879,7 @@ if [[ "${json_file_length:-0}" -eq 0 ]]; then
     validate_type "${arg_primary_key_column#*:}" "${arg_created_column#*:}" "${arg_updated_column#*:}" "${arg_deleted_column#*:}"
     info "${0##*/}: empty file. attempt inserting negative cache record: ${arg_table_name}: ${pk_column_name}=${arg_insert_if_empty}" 1>&2
     runq "${arg_database_file}" \
+      ".mode list" \
       ".timeout ${SQLITE_BUSY_TIMEOUT}" \
       ".parameter set @arg_insert_if_empty '${arg_insert_if_empty}'" \
       "BEGIN TRANSACTION;" \
@@ -959,6 +965,7 @@ fi
 #
 import_table_name="__import__${arg_table_name}"
 runq_args=( \
+  ".mode list" \
   ".timeout ${SQLITE_BUSY_TIMEOUT}" \
   "$(build_create_table_statement --temporary "${arg_database_file}" "${import_table_name}" "${current_column_specs}")" \
   ".parameter set @program_name '${0##*/}'" \
@@ -966,7 +973,7 @@ runq_args=( \
   ".parameter set @table_description '${table_description:-n/a}'" \
   ".mode csv" \
   ".import '${csv_file}' ${import_table_name}" \
-  ".mode ascii" \
+  ".mode list" \
   "BEGIN TRANSACTION;" \
 )
 
