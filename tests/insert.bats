@@ -34,7 +34,7 @@ SQL
     --updated-column=_UpdatedAt \
     --deleted-column=_DeletedAt \
     --insert-if-empty=13 \
-    --after-query="SELECT format('after importing, there are %d record(s).', COUNT(1)) FROM \"${table_name}\";" \
+    --after-query="SELECT 'after importing, there are ' || COUNT(1) ||' record(s).' FROM \"${table_name}\";" \
     "${database_file}" \
     "${table_name}" \
     < <(
@@ -61,7 +61,7 @@ SQL
     --updated-column=_UpdatedAt \
     --deleted-column=_DeletedAt \
     --insert-if-empty=13 \
-    --before-query="SELECT format('before importing, there were %d record(s).', COUNT(1)) FROM \"${table_name}\";" \
+    --before-query="SELECT 'before importing, there were ' || COUNT(1) || ' record(s).' FROM \"${table_name}\";" \
     "${database_file}" \
     "${table_name}" \
     < <(
@@ -115,7 +115,7 @@ SQL
     --created-column=_CreatedAt \
     --updated-column=_UpdatedAt \
     --deleted-column=_DeletedAt \
-    --after-query="SELECT format('after importing, there are %d record(s).', COUNT(1)) FROM \"${table_name}\";" \
+    --after-query="SELECT 'after importing, there are ' || COUNT(1) || ' record(s).' FROM \"${table_name}\";" \
     "${database_file}" \
     "${table_name}" \
     < <(
@@ -146,7 +146,7 @@ SQL
     --created-column=_CreatedAt \
     --updated-column=_UpdatedAt \
     --deleted-column=_DeletedAt \
-    --before-query="SELECT format('before importing, there were %d record(s).', COUNT(1)) FROM \"${table_name}\";" \
+    --before-query="SELECT 'before importing, there were ' || COUNT(1) || ' record(s).' FROM \"${table_name}\";" \
     "${database_file}" \
     "${table_name}" \
     < <(
