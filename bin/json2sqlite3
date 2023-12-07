@@ -878,11 +878,25 @@ if [[ "${json_file_length:-0}" -eq 0 ]]; then
     validate_ident "${arg_primary_key_column%%:*}" "${arg_created_column%%:*}" "${arg_updated_column%%:*}" "${arg_deleted_column%%:*}"
     validate_type "${arg_primary_key_column#*:}" "${arg_created_column#*:}" "${arg_updated_column#*:}" "${arg_deleted_column#*:}"
     info "${0##*/}: empty file. attempt inserting negative cache record: ${arg_table_name}: ${pk_column_name}=${arg_insert_if_empty}" 1>&2
-    runq "${arg_database_file}" \
+    runq_args=( \
       ".mode list" \
       ".timeout ${SQLITE_BUSY_TIMEOUT}" \
       ".parameter set @arg_insert_if_empty '${arg_insert_if_empty}'" \
       "BEGIN TRANSACTION;" \
+    )
+
+    if [[ ${#arg_before_queries[@]} -gt 0 ]]; then
+      i=1
+      for q in "${arg_before_queries[@]}"; do
+        runq_args+=( \
+          "${q}" \
+          "SELECT @program_name || ': mutated ' || changes() || ' record(s) on before-query#${i}.' WHERE 0 < changes();" \
+        )
+        i=$((i+1))
+      done
+    fi
+
+    runq_args+=( \
       "INSERT OR IGNORE INTO \"${arg_table_name}\" (
          \"${arg_primary_key_column%%:*}\",
          \"${arg_created_column%%:*}\",
@@ -901,7 +915,22 @@ if [[ "${json_file_length:-0}" -eq 0 ]]; then
          \"${arg_deleted_column%%:*}\" = cast(strftime('%s') AS ${arg_deleted_column#*:})
        WHERE
          \"${arg_primary_key_column%%:*}\" = @arg_insert_if_empty;" \
-      "COMMIT TRANSACTION;" || true
+    )
+
+    if [[ ${#arg_after_queries[*]} -gt 0 ]]; then
+      i=1
+      for q in "${arg_after_queries[@]}"; do
+        runq_args+=( \
+          "${q}" \
+          "SELECT @program_name || ': mutated ' || changes() || ' record(s) on after-query#${i}.' WHERE 0 < changes();" \
+        )
+        i=$((i+1))
+      done
+    fi
+    runq_args+=( \
+      "COMMIT TRANSACTION;" \
+    )
+    runq "${arg_database_file}" "${runq_args[@]}" || true
     exit 0
   fi
 fi
