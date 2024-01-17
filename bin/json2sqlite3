@@ -388,12 +388,15 @@ reconcile_column_specs3() {
         s2
       WHERE
         name IS NOT NULL AND name != ''
+        AND LOWER(name) NOT IN ( SELECT LOWER(name) FROM s1 )
       UNION SELECT
         name
       FROM
         s3
       WHERE
         name IS NOT NULL AND name != ''
+        AND LOWER(name) NOT IN ( SELECT LOWER(name) FROM s1 )
+        AND LOWER(name) NOT IN ( SELECT LOWER(name) FROM s2 )
     ), s0 AS (
       SELECT
         ( CASE
@@ -431,13 +434,13 @@ reconcile_column_specs3() {
         names
       LEFT JOIN
         s1
-          ON names.name = s1.name
+          ON LOWER(names.name) = LOWER(s1.name)
       LEFT JOIN
         s2
-          ON names.name = s2.name
+          ON LOWER(names.name) = LOWER(s2.name)
       LEFT JOIN
         s3
-          ON names.name = s3.name
+          ON LOWER(names.name) = LOWER(s3.name)
       ORDER BY
         cid
     ) SELECT
@@ -938,10 +941,10 @@ fi
 csv_file="$(mktemp "${TMPDIR}/csv_file.XXXXXXXX")"
 if jq --argjson current_column_specs "${current_column_specs:-[]}" --raw-output \
   'map(
-    . as $item |
+    (to_entries | map({key: (.key | ascii_downcase), value: .value}) | from_entries) as $item |
     $current_column_specs | map(
-      .name as $column_name |
-        (.type | ascii_upcase) as $column_type |
+      (.name | ascii_downcase) as $column_name |
+      (.type | ascii_upcase) as $column_type |
       if ($item[$column_name] | type == "null") then
         "\u00de\u00ad\u00be\u00efNULL" # converting JSON null into internal representation of NULL (w/ magic bytes) to insert SQLite3 NULL from CSV...
       else
