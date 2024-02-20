@@ -1,7 +1,7 @@
 require 'formula'
 
 class Json2sqlite3 < Formula
-  VERSION = '0.20240117.1'
+  VERSION = '0.20240220.1'
   homepage 'https://github.com/yyuu/json2sqlite3'
   url 'https://github.com/yyuu/json2sqlite3.git', tag: "v#{VERSION}"
   head 'https://github.com/yyuu/json2sqlite3.git', branch: "main"
