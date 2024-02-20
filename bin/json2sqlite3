@@ -564,7 +564,7 @@ while [[ $# -gt 0 ]]; do
       arg_create_table=1
     fi
     ;;
-  "--created-column" | "--created-column="* ) # usage: specify a column name to contain creation timestamp. you also can specify column type (e.g. created_at:INTEGER)
+  "--created-column" | "--created-column="* ) # usage: specify a column name to contain creation timestamp. you also can specify column type (e.g. created_at:NUMERIC)
     if [[ "$1" == *"="* ]]; then
       arg_created_column="${1#*=}"
     else
@@ -572,7 +572,7 @@ while [[ $# -gt 0 ]]; do
       shift 1
     fi
     if [[ "${arg_created_column:-}" != *":"* ]]; then
-      arg_created_column+=":INTEGER"
+      arg_created_column+=":NUMERIC"
     fi
     arg_column_specs+=("${arg_created_column}")
     ;;
@@ -580,7 +580,7 @@ while [[ $# -gt 0 ]]; do
     DEBUG=1
     set -x
     ;;
-  "--deleted-column" | "--deleted-column="* ) # usage: specify a column name to contain deletion timestamp. you also can specify column type (e.g. deleted_at:INTEGER)
+  "--deleted-column" | "--deleted-column="* ) # usage: specify a column name to contain deletion timestamp. you also can specify column type (e.g. deleted_at:NUMERIC)
     if [[ "$1" == *"="* ]]; then
       arg_deleted_column="${1#*=}"
     else
@@ -588,7 +588,7 @@ while [[ $# -gt 0 ]]; do
       shift 1
     fi
     if [[ "${arg_deleted_column:-}" != *":"* ]]; then
-      arg_deleted_column+=":INTEGER"
+      arg_deleted_column+=":NUMERIC"
     fi
     arg_column_specs+=("${arg_deleted_column}")
     ;;
@@ -653,7 +653,7 @@ while [[ $# -gt 0 ]]; do
       arg_soft_delete=1
     fi
     ;;
-  "--updated-column" | "--updated-column="* ) # usage: specify a column name to contain update timestamp. you also can specify column type (e.g. updated_at:INTEGER)
+  "--updated-column" | "--updated-column="* ) # usage: specify a column name to contain update timestamp. you also can specify column type (e.g. updated_at:NUMERIC)
     if [[ "$1" == *"="* ]]; then
       arg_updated_column="${1#*=}"
     else
@@ -661,7 +661,7 @@ while [[ $# -gt 0 ]]; do
       shift 1
     fi
     if [[ "${arg_updated_column:-}" != *":"* ]]; then
-      arg_updated_column+=":INTEGER"
+      arg_updated_column+=":NUMERIC"
     fi
     arg_column_specs+=("${arg_updated_column}")
     ;;
