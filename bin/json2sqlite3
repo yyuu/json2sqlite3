@@ -829,7 +829,7 @@ if sqlite3 -batch "${arg_database_file}" ".mode list" ".timeout ${SQLITE_BUSY_TI
   fi
   if compare_column_specs "${current_column_specs}" "${reconciled_column_specs}"; then
     table_description="existing table"
-    info "${0##*/}: existing table '${arg_table_name}' has schema compatible with columns detected in importing data."
+    debug "${0##*/}: existing table '${arg_table_name}' has schema compatible with columns detected in importing data."
   else
     if [[ -z "${arg_alter_table:-}" ]]; then
       error "${0##*/}: existing table '${arg_table_name}' has schema drift with columns detected in importing data. use --alter-table option to alter table."
