@@ -6,7 +6,7 @@ set -euo pipefail
 
 TMPDIR="$(mktemp -d)"
 VERSION="@@VERSION@@"
-VERBOSITY=2
+VERBOSITY="${VERBOSITY:-2}"
 
 # set timeout as 60 seconds to work around with "database is locked" error
 SQLITE_BUSY_TIMEOUT="${SQLITE_BUSY_TIMEOUT:-60000}"
@@ -49,6 +49,9 @@ error() {
       if [[ $# -eq 0 ]]; then cat; else printf '%s\n' "$*"; fi
       if [[ -t 2 ]]; then printf '\033[0m'; fi
     } 1>&2 || true
+  else
+    # ensure it's reading from stdin to avoid causing i/o error
+    if [[ $# -eq 0 ]]; then cat 1>/dev/null || true; fi
   fi
 }
 
@@ -58,6 +61,9 @@ warn() {
       if [[ $# -eq 0 ]]; then cat; else printf '%s\n' "$*"; fi
       if [[ -t 2 ]]; then printf '\033[0m'; fi
     } 1>&2 || true
+  else
+    # ensure it's reading from stdin to avoid causing i/o error
+    if [[ $# -eq 0 ]]; then cat 1>/dev/null || true; fi
   fi
 }
 
@@ -67,6 +73,9 @@ info() {
       if [[ $# -eq 0 ]]; then cat; else printf '%s\n' "$*"; fi
       if [[ -t 2 ]]; then printf '\033[0m'; fi
     } 1>&2 || true
+  else
+    # ensure it's reading from stdin to avoid causing i/o error
+    if [[ $# -eq 0 ]]; then cat 1>/dev/null || true; fi
   fi
 }
 
@@ -76,6 +85,9 @@ debug() {
       if [[ $# -eq 0 ]]; then cat; else printf '%s\n' "$*"; fi
       if [[ -t 2 ]]; then printf '\033[0m'; fi
     } 1>&2 || true
+  else
+    # ensure it's reading from stdin to avoid causing i/o error
+    if [[ $# -eq 0 ]]; then cat 1>/dev/null || true; fi
   fi
 }
 
@@ -1107,9 +1119,9 @@ cmdout="$(mktemp "${TMPDIR}/cmdout.XXXXXXXX")"
 if runq "${arg_database_file}" "${runq_args[@]}" 1>"${cmdout}"; then
   # SQLite3 will render 0x1e (Record Separator) in between outputs
   if [[ -z "${DRY_RUN:-}" ]]; then
-    tr '\036' '\n' < "${cmdout}" | info
+    tr '\036' '\n' < "${cmdout}" | debug
   else
-    info "${0##*/}: imported 0 record(s) into '${arg_table_name}' table (${table_description:-n/a}) (dry-run)."
+    debug "${0##*/}: imported 0 record(s) into '${arg_table_name}' table (${table_description:-n/a}) (dry-run)."
   fi
 else
   { echo "${0##*/}: failed to insert records into '${arg_table_name}' table (${table_description:-n/a})"
