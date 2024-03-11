@@ -59,7 +59,7 @@ assert_equal() {
 }
 
 assert_match() {
-  if [ "$1" =~ "$2" ]; then
+  if ! [[ "$2" =~ "$1" ]]; then
     { echo "expected: $1"
       echo "actual:   $2"
     } | flunk
