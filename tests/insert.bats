@@ -51,9 +51,9 @@ SQL
       jq --compact-output --null-input '[
     ]'
   )
-  assert_match "json2sqlite3: existing table '${table_name}' has schema compatible with columns detected in importing data."
-  assert_match "json2sqlite3: empty file. attempt inserting negative cache record: ${table_name}: _Id=13"
-  assert_match "after importing, there are 1 record(s)."
+  assert_output_match "json2sqlite3: existing table '${table_name}' has schema compatible with columns detected in importing data."
+  assert_output_match "json2sqlite3: empty file. attempt inserting negative cache record: ${table_name}: _Id=13"
+  assert_output_match "after importing, there are 1 record(s)."
   assert_success
 }
 
@@ -77,9 +77,9 @@ SQL
       jq --compact-output --null-input '[
     ]'
   )
-  assert_match "json2sqlite3: existing table '${table_name}' has schema compatible with columns detected in importing data."
-  assert_match "json2sqlite3: empty file. attempt inserting negative cache record: ${table_name}: _Id=13"
-  assert_match "before importing, there were 0 record(s)."
+  assert_output_match "json2sqlite3: existing table '${table_name}' has schema compatible with columns detected in importing data."
+  assert_output_match "json2sqlite3: empty file. attempt inserting negative cache record: ${table_name}: _Id=13"
+  assert_output_match "before importing, there were 0 record(s)."
   assert_success
 }
 
@@ -140,10 +140,10 @@ SQL
       {"_Id": 3, "foo": "FOO3", "bar": "BAR3", "_CreatedAt":1234567892, "_UpdatedAt": 1234567895, "_DeletedAt": -1}
     ]'
   )
-  assert_match "json2sqlite3: existing table '${table_name}' has schema compatible with columns detected in importing data."
-  assert_match "json2sqlite3: imported 2 record(s) into '${table_name}' table (existing table)."
-  assert_match "after importing, there are 3 record(s)."
-  assert_match "json2sqlite3: mutated 2 record(s) on after-query#1."
+  assert_output_match "json2sqlite3: existing table '${table_name}' has schema compatible with columns detected in importing data."
+  assert_output_match "json2sqlite3: imported 2 record(s) into '${table_name}' table (existing table)."
+  assert_output_match "after importing, there are 3 record(s)."
+  assert_output_match "json2sqlite3: mutated 2 record(s) on after-query#1."
   assert_success
 }
 
@@ -170,10 +170,10 @@ SQL
       {"_Id": 3, "foo": "FOO3", "bar": "BAR3", "_CreatedAt":1234567892, "_UpdatedAt": 1234567895, "_DeletedAt": -1}
     ]'
   )
-  assert_match "json2sqlite3: existing table '${table_name}' has schema compatible with columns detected in importing data."
-  assert_match "before importing, there were 2 record(s)."
-  assert_match "json2sqlite3: mutated 1 record(s) on before-query#1."
-  assert_match "json2sqlite3: imported 2 record(s) into '${table_name}' table (existing table)."
+  assert_output_match "json2sqlite3: existing table '${table_name}' has schema compatible with columns detected in importing data."
+  assert_output_match "before importing, there were 2 record(s)."
+  assert_output_match "json2sqlite3: mutated 1 record(s) on before-query#1."
+  assert_output_match "json2sqlite3: imported 2 record(s) into '${table_name}' table (existing table)."
   assert_success
 }
 
@@ -233,10 +233,10 @@ SQL
     "${database_file}" \
     "${table_name}" \
     < <(
-    jq --compact-output --null-input '[
-      {"_Id": 2, "foo": "FOO2.1", "bar": "BAR2.1", "_CreatedAt":1334567891, "_UpdatedAt": 1334567894, "_DeletedAt": -1}
-    ]'
-  )
+      jq --compact-output --null-input '[
+        {"_Id": 2, "foo": "FOO2.1", "bar": "BAR2.1", "_CreatedAt":1334567891, "_UpdatedAt": 1334567894, "_DeletedAt": -1}
+      ]'
+    )
   assert_success
   run sqlite3 "${database_file}" <<SQL
 SELECT * FROM "${table_name}" WHERE _DeletedAt < 0 ORDER BY _Id;
@@ -245,4 +245,58 @@ SQL
 2|FOO2.1|BAR2.1|1334567891|1334567894|-1
 EOS
   assert_success
+}
+
+@test "insert records with invalid column names in importing data" {
+  database_file="$(generate_database_file "${BATS_TEST_FILENAME##*/}")"
+  table_name="$(generate_table_name "${BATS_TEST_FILENAME##*/}")"
+  sqlite3 "${database_file}" <<SQL
+CREATE TABLE "${table_name}" (_Id INTEGER PRIMARY KEY, foo_column TEXT, bar_column TEXT, _CreatedAt INTEGER, _UpdatedAt INTEGER, _DeletedAt INTEGER);
+SQL
+  run json2sqlite3 \
+    --primary-key-column=_Id \
+    --created-column=_CreatedAt \
+    --updated-column=_UpdatedAt \
+    --deleted-column=_DeletedAt \
+    --soft-delete \
+    --verbose \
+    "${database_file}" \
+    "${table_name}" \
+    < <(
+    jq --compact-output --null-input '[
+      {"_Id": 1, "foo-column": "FOO1", "bar-column": "BAR1"},
+      {"_Id": 2, "foo-column": "FOO2", "bar-column": "BAR2"},
+      {"_Id": 3, "foo-column": "FOO3", "bar-column": "BAR3"}
+    ]'
+  )
+  assert_output_match "invalid identifier for SQLite3 column name"
+  assert_failure
+}
+
+@test "insert records with invalid column names in command line arguments" {
+  database_file="$(generate_database_file "${BATS_TEST_FILENAME##*/}")"
+  table_name="$(generate_table_name "${BATS_TEST_FILENAME##*/}")"
+  sqlite3 "${database_file}" <<SQL
+CREATE TABLE "${table_name}" (_Id INTEGER PRIMARY KEY, foo_column TEXT, bar_column TEXT, _CreatedAt INTEGER, _UpdatedAt INTEGER, _DeletedAt INTEGER);
+SQL
+  run json2sqlite3 \
+    --primary-key-column=_Id \
+    --created-column=_CreatedAt \
+    --updated-column=_UpdatedAt \
+    --deleted-column=_DeletedAt \
+    --generic-column=foo-column:TEXT \
+    --generic-column=bar-column:TEXT \
+    --soft-delete \
+    --verbose \
+    "${database_file}" \
+    "${table_name}" \
+    < <(
+    jq --compact-output --null-input '[
+      {"_Id": 1, "foo-column": "FOO1", "bar-column": "BAR1"},
+      {"_Id": 2, "foo-column": "FOO2", "bar-column": "BAR2"},
+      {"_Id": 3, "foo-column": "FOO3", "bar-column": "BAR3"}
+    ]'
+  )
+  assert_output_match "invalid identifier for SQLite3 table/column name"
+  assert_failure
 }

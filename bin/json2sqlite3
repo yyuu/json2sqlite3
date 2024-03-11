@@ -185,22 +185,25 @@ detect_column_specs_from_args() {
   for arg in "$@"; do
     local column_name="${arg%%:*}"
     local column_type="${arg#*:}"
-    validate_ident "${column_name}"
-    local pk='false'
-    if [[ "${column_name:-}" == "${pk:-}" ]]; then
-      pk='true'
+    if validate_ident "${column_name}"; then
+      local pk='false'
+      if [[ "${column_name:-}" == "${pk:-}" ]]; then
+        pk='true'
+      fi
+      specs="$(jq \
+        --argjson cid "${cid}" \
+        --argjson notnull 'false' \
+        --argjson dflt_value 'null' \
+        --argjson pk "${pk:-false}" \
+        --arg name "${column_name}" \
+        --arg type "${column_type}" \
+        --compact-output \
+        '. + [{cid: $cid, name: $name, type: $type, notnull: $notnull, dflt_value: $dflt_value, pk: $pk}]' \
+        <<< "${specs}" \
+      )"
+    else
+      return 1
     fi
-    specs="$(jq \
-      --argjson cid "${cid}" \
-      --argjson notnull 'false' \
-      --argjson dflt_value 'null' \
-      --argjson pk "${pk:-false}" \
-      --arg name "${column_name}" \
-      --arg type "${column_type}" \
-      --compact-output \
-      '. + [{cid: $cid, name: $name, type: $type, notnull: $notnull, dflt_value: $dflt_value, pk: $pk}]' \
-      <<< "${specs}" \
-    )"
     cid="$(( cid + 1 ))"
   done
   echo "${specs}"
@@ -215,8 +218,14 @@ detect_column_specs_from_json() {
   else
     local csv_file
     csv_file="$(mktemp "${TMPDIR}/csv_file.XXXXXXXX")"
-    jq --raw-output 'map(
-      to_entries | map(
+    if jq --arg PROGRAM_NAME "${0##*/}" \
+       --raw-output \
+      'map(to_entries | map(
+        if (.key | test("^[A-Z_a-z][0-9A-Z_a-z]*$")) then
+          .
+        else
+          error("\($PROGRAM_NAME): invalid identifier for SQLite3 column name: \"\(.key)\"")
+        end |
         (.value | type) as $json_type |
           (if "array" == $json_type then
             "JSON"
@@ -234,18 +243,21 @@ detect_column_specs_from_json() {
             error("unsupported JSON data type: \(.value):\($json_type)")
           end) as $sqlite_type | [.key, $sqlite_type]
         )
-    ) | if 0 < length then add[] else [] end | @csv' < "${json_file}" > "${csv_file}"
-    sqlite3 -batch "/dev/null" \
-      ".mode list" \
-      ".timeout ${SQLITE_BUSY_TIMEOUT}" \
-      "CREATE TEMPORARY TABLE _s1 (name TEXT, type TEXT);" \
-      "CREATE TEMPORARY TABLE s1 (cid INTEGER PRIMARY KEY, name TEXT, type TEXT);" \
-      "CREATE UNIQUE INDEX s1_name ON s1 (name);" \
-      ".mode csv" \
-      ".import '${csv_file}' _s1" \
-      ".mode list" \
-      "INSERT OR IGNORE INTO s1 (name, type) SELECT name, type FROM _s1 WHERE 0 < length(name);" \
-      "SELECT json_group_array(json_object('cid', cid, 'name', name, 'type', type, 'notnull', FALSE, 'dflt_value', NULL, 'pk', FALSE)) FROM s1 ORDER BY cid;"
+      ) | if 0 < length then add[] else [] end | @csv' < "${json_file}" > "${csv_file}"; then
+      sqlite3 -batch "/dev/null" \
+        ".mode list" \
+        ".timeout ${SQLITE_BUSY_TIMEOUT}" \
+        "CREATE TEMPORARY TABLE _s1 (name TEXT, type TEXT);" \
+        "CREATE TEMPORARY TABLE s1 (cid INTEGER PRIMARY KEY, name TEXT, type TEXT);" \
+        "CREATE UNIQUE INDEX s1_name ON s1 (name);" \
+        ".mode csv" \
+        ".import '${csv_file}' _s1" \
+        ".mode list" \
+        "INSERT OR IGNORE INTO s1 (name, type) SELECT name, type FROM _s1 WHERE 0 < length(name);" \
+        "SELECT json_group_array(json_object('cid', cid, 'name', name, 'type', type, 'notnull', FALSE, 'dflt_value', NULL, 'pk', FALSE)) FROM s1 ORDER BY cid;"
+    else
+      return 1
+    fi
   fi
 }
 
