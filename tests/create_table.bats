@@ -13,7 +13,7 @@ load test_helper
     ]'
   )
   assert_success
-  run sqlite3 -init "/dev/null" "${database_file}" <<SQL
+  run --separate-stderr sqlite3 -init "/dev/null" "${database_file}" <<SQL
 SELECT COUNT(1) FROM "${table_name}" ORDER BY _Id;
 SQL
   assert_failure
@@ -31,7 +31,7 @@ SQL
   )
 # assert_output ""
   assert_success
-  run sqlite3 -init "/dev/null" "${database_file}" <<SQL
+  run --separate-stderr sqlite3 -init "/dev/null" "${database_file}" <<SQL
 SELECT _Id, foo, bar FROM "${table_name}" ORDER BY _Id;
 SQL
   assert_output <<EOS
@@ -54,7 +54,7 @@ EOS
   )
 # assert_output ""
   assert_success
-  run sqlite3 -init "/dev/null" "${database_file}" <<SQL
+  run --separate-stderr sqlite3 -init "/dev/null" "${database_file}" <<SQL
 SELECT _Id, foo, bar FROM "${table_name}" ORDER BY _Id;
 SQL
   assert_output <<EOS
@@ -76,7 +76,7 @@ EOS
   )
 # assert_output ""
   assert_success
-  run sqlite3 -init "/dev/null" "${database_file}" <<SQL
+  run --separate-stderr sqlite3 -init "/dev/null" "${database_file}" <<SQL
 SELECT _Id, foo, bar, baz FROM "${table_name}" ORDER BY _Id;
 SQL
   assert_output <<EOS
@@ -99,7 +99,7 @@ EOS
   )
 # assert_output ""
   assert_success
-  run sqlite3 -init "/dev/null" "${database_file}" <<SQL
+  run --separate-stderr sqlite3 -init "/dev/null" "${database_file}" <<SQL
 SELECT _Id, foo, bar, _CreatedAt, _UpdatedAt, _DeletedAt FROM "${table_name}" ORDER BY _Id;
 SQL
   assert_output <<EOS

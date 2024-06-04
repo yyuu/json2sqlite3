@@ -22,7 +22,7 @@ SQL
     ]'
   )
   assert_success
-  run sqlite3 -init "/dev/null" "${database_file}" <<SQL
+  run --separate-stderr sqlite3 -init "/dev/null" "${database_file}" <<SQL
 SELECT _Id FROM "${table_name}" WHERE 0 < _DeletedAt ORDER BY _Id;
 SQL
   assert_output <<EOS
@@ -106,7 +106,7 @@ SQL
     ]'
   )
   assert_success
-  run sqlite3 -init "/dev/null" "${database_file}" <<SQL
+  run --separate-stderr sqlite3 -init "/dev/null" "${database_file}" <<SQL
 SELECT * FROM "${table_name}" ORDER BY _Id;
 SQL
   assert_output <<EOS
@@ -203,7 +203,7 @@ SQL
     ]'
   )
   assert_success
-  run sqlite3 -init "/dev/null" "${database_file}" <<SQL
+  run --separate-stderr sqlite3 -init "/dev/null" "${database_file}" <<SQL
 SELECT * FROM "${table_name}" ORDER BY _Id;
 SQL
   assert_output <<EOS
@@ -238,7 +238,7 @@ SQL
       ]'
     )
   assert_success
-  run sqlite3 -init "/dev/null" "${database_file}" <<SQL
+  run --separate-stderr sqlite3 -init "/dev/null" "${database_file}" <<SQL
 SELECT * FROM "${table_name}" WHERE _DeletedAt < 0 ORDER BY _Id;
 SQL
   assert_output <<EOS

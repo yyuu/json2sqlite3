@@ -11,15 +11,13 @@ load test_helper
     ]'
   )
   assert_success
-  run sqlite3 -init "/dev/null" "${database_file}" "SELECT json_type(col1) FROM \"${table_name}\";"
+  run --separate-stderr sqlite3 -init "/dev/null" "${database_file}" "SELECT json_type(col1) FROM \"${table_name}\";"
   assert_output <<EOS
--- Loading resources from /dev/null
 array
 EOS
   assert_success
-  run sqlite3 -init "/dev/null" "${database_file}" "SELECT type FROM pragma_table_info(\"${table_name}\") WHERE name = 'col1';"
+  run --separate-stderr sqlite3 -init "/dev/null" "${database_file}" "SELECT type FROM pragma_table_info(\"${table_name}\") WHERE name = 'col1';"
   assert_output <<EOS
--- Loading resources from /dev/null
 JSON
 EOS
   assert_success
@@ -35,15 +33,13 @@ EOS
     ]'
   )
   assert_success
-  run sqlite3 -init "/dev/null" "${database_file}" "SELECT sum(col1) FROM \"${table_name}\";"
+  run --separate-stderr sqlite3 -init "/dev/null" "${database_file}" "SELECT sum(col1) FROM \"${table_name}\";"
   assert_output <<EOS
--- Loading resources from /dev/null
 1
 EOS
   assert_success
-  run sqlite3 -init "/dev/null" "${database_file}" "SELECT type FROM pragma_table_info(\"${table_name}\") WHERE name = 'col1';"
+  run --separate-stderr sqlite3 -init "/dev/null" "${database_file}" "SELECT type FROM pragma_table_info(\"${table_name}\") WHERE name = 'col1';"
   assert_output <<EOS
--- Loading resources from /dev/null
 INTEGER
 EOS
   assert_success
@@ -60,15 +56,13 @@ EOS
     ]'
   )
   assert_success
-  run sqlite3 -init "/dev/null" "${database_file}" "SELECT COUNT(1) FROM \"${table_name}\" WHERE col1 IS NULL;"
+  run --separate-stderr sqlite3 -init "/dev/null" "${database_file}" "SELECT COUNT(1) FROM \"${table_name}\" WHERE col1 IS NULL;"
   assert_output <<EOS
--- Loading resources from /dev/null
 2
 EOS
   assert_success
-  run sqlite3 -init "/dev/null" "${database_file}" "SELECT type FROM pragma_table_info(\"${table_name}\") WHERE name = 'col1';"
+  run --separate-stderr sqlite3 -init "/dev/null" "${database_file}" "SELECT type FROM pragma_table_info(\"${table_name}\") WHERE name = 'col1';"
   assert_output <<EOS
--- Loading resources from /dev/null
 JSON
 EOS
   assert_success
@@ -85,15 +79,13 @@ EOS
     ]'
   )
   assert_success
-  run sqlite3 -init "/dev/null" "${database_file}" "SELECT sum(col1) FROM \"${table_name}\";"
+  run --separate-stderr sqlite3 -init "/dev/null" "${database_file}" "SELECT sum(col1) FROM \"${table_name}\";"
   assert_output <<EOS
--- Loading resources from /dev/null
 123
 EOS
   assert_success
-  run sqlite3 -init "/dev/null" "${database_file}" "SELECT type FROM pragma_table_info(\"${table_name}\") WHERE name = 'col1';"
+  run --separate-stderr sqlite3 -init "/dev/null" "${database_file}" "SELECT type FROM pragma_table_info(\"${table_name}\") WHERE name = 'col1';"
   assert_output <<EOS
--- Loading resources from /dev/null
 NUMERIC
 EOS
   assert_success
@@ -110,15 +102,13 @@ EOS
     ]'
   )
   assert_success
-  run sqlite3 -init "/dev/null" "${database_file}" "SELECT sum(col1) FROM \"${table_name}\";"
+  run --separate-stderr sqlite3 -init "/dev/null" "${database_file}" "SELECT sum(col1) FROM \"${table_name}\";"
   assert_output <<EOS
--- Loading resources from /dev/null
 6.6
 EOS
   assert_success
-  run sqlite3 -init "/dev/null" "${database_file}" "SELECT type FROM pragma_table_info(\"${table_name}\") WHERE name = 'col1';"
+  run --separate-stderr sqlite3 -init "/dev/null" "${database_file}" "SELECT type FROM pragma_table_info(\"${table_name}\") WHERE name = 'col1';"
   assert_output <<EOS
--- Loading resources from /dev/null
 NUMERIC
 EOS
   assert_success
@@ -135,15 +125,13 @@ EOS
     ]'
   )
   assert_success
-  run sqlite3 -init "/dev/null" "${database_file}" "SELECT json_group_array(json_extract(col1, '$.foo')) FROM \"${table_name}\" ORDER BY id;"
+  run --separate-stderr sqlite3 -init "/dev/null" "${database_file}" "SELECT json_group_array(json_extract(col1, '$.foo')) FROM \"${table_name}\" ORDER BY id;"
   assert_output <<EOS
--- Loading resources from /dev/null
 ["FOO1","FOO2","FOO3"]
 EOS
   assert_success
-  run sqlite3 -init "/dev/null"  "${database_file}" "SELECT type FROM pragma_table_info(\"${table_name}\") WHERE name = 'col1';"
+  run --separate-stderr sqlite3 -init "/dev/null"  "${database_file}" "SELECT type FROM pragma_table_info(\"${table_name}\") WHERE name = 'col1';"
   assert_output <<EOS
--- Loading resources from /dev/null
 JSON
 EOS
   assert_success
@@ -160,15 +148,13 @@ EOS
     ]'
   )
   assert_success
-  run sqlite3 -init "/dev/null" "${database_file}" "SELECT sum(instr(col1, 'X')) FROM \"${table_name}\";"
+  run --separate-stderr sqlite3 -init "/dev/null" "${database_file}" "SELECT sum(instr(col1, 'X')) FROM \"${table_name}\";"
   assert_output <<EOS
--- Loading resources from /dev/null
 63
 EOS
   assert_success
-  run sqlite3 -init "/dev/null" "${database_file}" "SELECT type FROM pragma_table_info(\"${table_name}\") WHERE name = 'col1';"
+  run --separate-stderr sqlite3 -init "/dev/null" "${database_file}" "SELECT type FROM pragma_table_info(\"${table_name}\") WHERE name = 'col1';"
   assert_output <<EOS
--- Loading resources from /dev/null
 TEXT
 EOS
   assert_success

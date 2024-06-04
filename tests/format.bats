@@ -15,7 +15,7 @@ SQL
     ]'
   )
   assert_success
-  run sqlite3 -init "/dev/null" "${database_file}" <<SQL
+  run --separate-stderr sqlite3 -init "/dev/null" "${database_file}" <<SQL
 SELECT _Id, foo, bar FROM "${table_name}" ORDER BY _Id;
 SQL
   assert_output <<EOS
@@ -38,7 +38,7 @@ SQL
     ][]'
   )
   assert_success
-  run sqlite3 -init "/dev/null" "${database_file}" <<SQL
+  run --separate-stderr sqlite3 -init "/dev/null" "${database_file}" <<SQL
 SELECT _Id, foo, bar FROM "${table_name}" ORDER BY _Id;
 SQL
   assert_output <<EOS

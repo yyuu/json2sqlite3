@@ -9,6 +9,7 @@ export PATH
 
 setup() {
   mkdir -p "${BATS_TEST_DIRNAME}/tmp"
+  bats_require_minimum_version 1.5.0
 }
 
 teardown() {

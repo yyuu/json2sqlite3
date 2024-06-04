@@ -15,7 +15,7 @@ load test_helper
   )
   assert_success
   sqlite3 -init "/dev/null" "${database_file}" ".mode json" "SELECT * FROM \"${table_name1}\" ORDER BY _Id;" | run json2sqlite3 --primary-key-column=_Id:INTEGER --created-column=_CreatedAt:INTEGER --updated-column=_UpdatedAt:INTEGER --deleted-column=_DeletedAt:INTEGER "${database_file}" "${table_name2}"
-  run sqlite3 -init "/dev/null" "${database_file}" <<SQL
+  run --separate-stderr sqlite3 -init "/dev/null" "${database_file}" <<SQL
 SELECT COUNT(1) FROM "${table_name2}";
 SQL
   assert_output "3"
