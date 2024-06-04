@@ -5,7 +5,7 @@ load test_helper
 @test "insert negative cache records" {
   database_file="$(generate_database_file "${BATS_TEST_FILENAME##*/}")"
   table_name="$(generate_table_name "${BATS_TEST_FILENAME##*/}")"
-  sqlite3 "${database_file}" <<SQL
+  sqlite3 -init "/dev/null" "${database_file}" <<SQL
 CREATE TABLE "${table_name}" (_Id INTEGER PRIMARY KEY, foo TEXT, bar TEXT, _CreatedAt INTEGER, _UpdatedAt INTEGER, _DeletedAt INTEGER);
 SQL
   run json2sqlite3 \
@@ -22,7 +22,7 @@ SQL
     ]'
   )
   assert_success
-  run sqlite3 "${database_file}" <<SQL
+  run --separate-stderr sqlite3 -init "/dev/null" "${database_file}" <<SQL
 SELECT _Id FROM "${table_name}" WHERE 0 < _DeletedAt ORDER BY _Id;
 SQL
   assert_output <<EOS
@@ -34,7 +34,7 @@ EOS
 @test "insert negative cache records w/ after query" {
   database_file="$(generate_database_file "${BATS_TEST_FILENAME##*/}")"
   table_name="$(generate_table_name "${BATS_TEST_FILENAME##*/}")"
-  sqlite3 "${database_file}" <<SQL
+  sqlite3 -init "/dev/null" "${database_file}" <<SQL
 CREATE TABLE "${table_name}" (_Id INTEGER PRIMARY KEY, foo TEXT, bar TEXT, _CreatedAt INTEGER, _UpdatedAt INTEGER, _DeletedAt INTEGER);
 SQL
   run json2sqlite3 \
@@ -60,7 +60,7 @@ SQL
 @test "insert negative cache records w/ before query" {
   database_file="$(generate_database_file "${BATS_TEST_FILENAME##*/}")"
   table_name="$(generate_table_name "${BATS_TEST_FILENAME##*/}")"
-  sqlite3 "${database_file}" <<SQL
+  sqlite3 -init "/dev/null" "${database_file}" <<SQL
 CREATE TABLE "${table_name}" (_Id INTEGER PRIMARY KEY, foo TEXT, bar TEXT, _CreatedAt INTEGER, _UpdatedAt INTEGER, _DeletedAt INTEGER);
 SQL
   run json2sqlite3 \
@@ -86,7 +86,7 @@ SQL
 @test "insert records into existing table" {
   database_file="$(generate_database_file "${BATS_TEST_FILENAME##*/}")"
   table_name="$(generate_table_name "${BATS_TEST_FILENAME##*/}")"
-  sqlite3 "${database_file}" <<SQL
+  sqlite3 -init "/dev/null" "${database_file}" <<SQL
 CREATE TABLE "${table_name}" (_Id INTEGER PRIMARY KEY, foo TEXT, bar TEXT, _CreatedAt INTEGER, _UpdatedAt INTEGER, _DeletedAt INTEGER);
 INSERT INTO "${table_name}" (_Id, foo, _CreatedAt, _UpdatedAt, _DeletedAt) VALUES (1, 'FOO1', 1234567890, 1234567893, -1);
 INSERT INTO "${table_name}" (_Id, foo, _CreatedAt, _UpdatedAt, _DeletedAt) VALUES (2, 'FOO2', -1, -1, -1);
@@ -106,7 +106,7 @@ SQL
     ]'
   )
   assert_success
-  run sqlite3 "${database_file}" <<SQL
+  run --separate-stderr sqlite3 -init "/dev/null" "${database_file}" <<SQL
 SELECT * FROM "${table_name}" ORDER BY _Id;
 SQL
   assert_output <<EOS
@@ -120,7 +120,7 @@ EOS
 @test "insert records into existing table w/ after query" {
   database_file="$(generate_database_file "${BATS_TEST_FILENAME##*/}")"
   table_name="$(generate_table_name "${BATS_TEST_FILENAME##*/}")"
-  sqlite3 "${database_file}" <<SQL
+  sqlite3 -init "/dev/null" "${database_file}" <<SQL
 CREATE TABLE "${table_name}" (_Id INTEGER PRIMARY KEY, foo TEXT, bar TEXT, _CreatedAt INTEGER, _UpdatedAt INTEGER, _DeletedAt INTEGER);
 INSERT INTO "${table_name}" (_Id, foo, _CreatedAt, _UpdatedAt, _DeletedAt) VALUES (1, 'FOO1', 1234567890, 1234567893, -1);
 INSERT INTO "${table_name}" (_Id, foo, _CreatedAt, _UpdatedAt, _DeletedAt) VALUES (2, 'FOO2', -1, -1, -1);
@@ -150,7 +150,7 @@ SQL
 @test "insert records into existing table w/ before query" {
   database_file="$(generate_database_file "${BATS_TEST_FILENAME##*/}")"
   table_name="$(generate_table_name "${BATS_TEST_FILENAME##*/}")"
-  sqlite3 "${database_file}" <<SQL
+  sqlite3 -init "/dev/null" "${database_file}" <<SQL
 CREATE TABLE "${table_name}" (_Id INTEGER PRIMARY KEY, foo TEXT, bar TEXT, _CreatedAt INTEGER, _UpdatedAt INTEGER, _DeletedAt INTEGER);
 INSERT INTO "${table_name}" (_Id, foo, _CreatedAt, _UpdatedAt, _DeletedAt) VALUES (1, 'FOO1', 1234567890, 1234567893, -1);
 INSERT INTO "${table_name}" (_Id, foo, _CreatedAt, _UpdatedAt, _DeletedAt) VALUES (2, 'FOO2', -1, -1, -1);
@@ -180,7 +180,7 @@ SQL
 @test "insert records with preserving created timestamp" {
   database_file="$(generate_database_file "${BATS_TEST_FILENAME##*/}")"
   table_name="$(generate_table_name "${BATS_TEST_FILENAME##*/}")"
-  sqlite3 "${database_file}" <<SQL
+  sqlite3 -init "/dev/null" "${database_file}" <<SQL
 CREATE TABLE "${table_name}" (_Id INTEGER PRIMARY KEY, foo TEXT, bar TEXT, _CreatedAt INTEGER, _UpdatedAt INTEGER, _DeletedAt INTEGER);
 INSERT INTO "${table_name}" (_Id, foo, _CreatedAt, _UpdatedAt, _DeletedAt) VALUES (1, 'FOO1', 1234567890, 1234567893, -1);
 INSERT INTO "${table_name}" (_Id, foo, _CreatedAt, _UpdatedAt, _DeletedAt) VALUES (2, 'FOO2', 1234567891, 1234567894, -1);
@@ -203,7 +203,7 @@ SQL
     ]'
   )
   assert_success
-  run sqlite3 "${database_file}" <<SQL
+  run --separate-stderr sqlite3 -init "/dev/null" "${database_file}" <<SQL
 SELECT * FROM "${table_name}" ORDER BY _Id;
 SQL
   assert_output <<EOS
@@ -217,7 +217,7 @@ EOS
 @test "insert records with marking soft deleted" {
   database_file="$(generate_database_file "${BATS_TEST_FILENAME##*/}")"
   table_name="$(generate_table_name "${BATS_TEST_FILENAME##*/}")"
-  sqlite3 "${database_file}" <<SQL
+  sqlite3 -init "/dev/null" "${database_file}" <<SQL
 CREATE TABLE "${table_name}" (_Id INTEGER PRIMARY KEY, foo TEXT, bar TEXT, _CreatedAt INTEGER, _UpdatedAt INTEGER, _DeletedAt INTEGER);
 INSERT INTO "${table_name}" (_Id, foo, _CreatedAt, _UpdatedAt, _DeletedAt) VALUES (1, 'FOO1', 1234567890, 1234567893, -1);
 INSERT INTO "${table_name}" (_Id, foo, _CreatedAt, _UpdatedAt, _DeletedAt) VALUES (2, 'FOO2', 1234567891, 1234567894, -1);
@@ -238,7 +238,7 @@ SQL
       ]'
     )
   assert_success
-  run sqlite3 "${database_file}" <<SQL
+  run --separate-stderr sqlite3 -init "/dev/null" "${database_file}" <<SQL
 SELECT * FROM "${table_name}" WHERE _DeletedAt < 0 ORDER BY _Id;
 SQL
   assert_output <<EOS
@@ -250,7 +250,7 @@ EOS
 @test "insert records with invalid column names in importing data" {
   database_file="$(generate_database_file "${BATS_TEST_FILENAME##*/}")"
   table_name="$(generate_table_name "${BATS_TEST_FILENAME##*/}")"
-  sqlite3 "${database_file}" <<SQL
+  sqlite3 -init "/dev/null" "${database_file}" <<SQL
 CREATE TABLE "${table_name}" (_Id INTEGER PRIMARY KEY, foo_column TEXT, bar_column TEXT, _CreatedAt INTEGER, _UpdatedAt INTEGER, _DeletedAt INTEGER);
 SQL
   run json2sqlite3 \
@@ -276,7 +276,7 @@ SQL
 @test "insert records with invalid column names in command line arguments" {
   database_file="$(generate_database_file "${BATS_TEST_FILENAME##*/}")"
   table_name="$(generate_table_name "${BATS_TEST_FILENAME##*/}")"
-  sqlite3 "${database_file}" <<SQL
+  sqlite3 -init "/dev/null" "${database_file}" <<SQL
 CREATE TABLE "${table_name}" (_Id INTEGER PRIMARY KEY, foo_column TEXT, bar_column TEXT, _CreatedAt INTEGER, _UpdatedAt INTEGER, _DeletedAt INTEGER);
 SQL
   run json2sqlite3 \
