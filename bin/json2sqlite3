@@ -232,7 +232,7 @@ detect_column_specs_from_json() {
           elif "boolean" == $json_type then
             "INTEGER"
           elif "null" == $json_type then
-            "JSON"
+            null
           elif "number" == $json_type then
             "NUMERIC"
           elif "object" == $json_type then
@@ -241,9 +241,9 @@ detect_column_specs_from_json() {
             "TEXT"
           else
             error("unsupported JSON data type: \(.value):\($json_type)")
-          end) as $sqlite_type | [.key, $sqlite_type]
-        )
-      ) | if 0 < length then add[] else [] end | @csv' < "${json_file}" > "${csv_file}"; then
+          end) as $sqlite_type | {key: .key, value: .value, json_type: $json_type, sqlite_type: $sqlite_type}
+        )) | if 0 < length then add else [] end |
+      map(select(.sqlite_type != null)) | map([.key, .sqlite_type])[] | @csv' < "${json_file}" > "${csv_file}"; then
       sqlite3 -batch -init "/dev/null" "/dev/null" \
         ".mode list" \
         ".timeout ${SQLITE_BUSY_TIMEOUT}" \
@@ -1012,6 +1012,8 @@ if jq --argjson current_column_specs "${current_column_specs:-[]}" --raw-output 
           end
         elif ("JSON" == $column_type) then
           ($item[$column_name] | tojson)
+        elif ("NULL" == $column_type) then
+          null
         elif ("REAL" == $column_type) then
           $item[$column_name]
         elif ("TEXT" == $column_type) then

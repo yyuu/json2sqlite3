@@ -57,14 +57,29 @@ EOS
   )
   assert_success
   run --separate-stderr sqlite3 -init "/dev/null" "${database_file}" "SELECT COUNT(1) FROM \"${table_name}\" WHERE col1 IS NULL;"
-  assert_output <<EOS
-2
-EOS
+  assert_output "2"
   assert_success
   run --separate-stderr sqlite3 -init "/dev/null" "${database_file}" "SELECT type FROM pragma_table_info(\"${table_name}\") WHERE name = 'col1';"
-  assert_output <<EOS
-JSON
-EOS
+  assert_output "NUMERIC" # as long as there is some record with non-NULL value, the column type affinity should be detected from the actual data
+  assert_success
+}
+
+@test "insert all null records" {
+  database_file="$(generate_database_file "${BATS_TEST_FILENAME##*/}")"
+  table_name="$(generate_table_name "${BATS_TEST_FILENAME##*/}")"
+  run json2sqlite3 "${database_file}" "${table_name}" < <(
+    jq --compact-output --null-input '[
+      {"id": 1, "col1": null},
+      {"id": 2, "col1": null},
+      {"id": 3, "col1": null}
+    ]'
+  )
+  assert_success
+  run --separate-stderr sqlite3 -init "/dev/null" "${database_file}" "SELECT COUNT(1) FROM \"${table_name}\";"
+  assert_output "3"
+  assert_success
+  run --separate-stderr sqlite3 -init "/dev/null" "${database_file}" "SELECT type FROM pragma_table_info(\"${table_name}\") WHERE name = 'col1';"
+  assert_output "" # discard column with all NULL values as NULL isn't a valid column type affinity in SQLite3
   assert_success
 }
 
