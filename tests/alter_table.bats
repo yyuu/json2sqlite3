@@ -5,7 +5,7 @@ load test_helper
 @test "alter existing table (dry-run)" {
   database_file="$(generate_database_file "${BATS_TEST_FILENAME##*/}")"
   table_name="$(generate_table_name "${BATS_TEST_FILENAME##*/}")"
-  sqlite3 "${database_file}" <<SQL
+  sqlite3 -init "/dev/null" "${database_file}" <<SQL
 CREATE TABLE "${table_name}" (_Id INTEGER);
 SQL
   run json2sqlite3 --dry-run "${database_file}" "${table_name}" < <(
@@ -16,12 +16,14 @@ SQL
     ]'
   )
   assert_success
-  run sqlite3 "${database_file}" <<SQL
+  run sqlite3 -init "/dev/null" "${database_file}" <<SQL
 SELECT COUNT(1) FROM "${table_name}" ORDER BY _Id;
 SQL
-  assert_output "0"
+  assert_output <<EOS
+0
+EOS
   assert_success
-  run sqlite3 "${database_file}" <<SQL
+  run sqlite3 -init "/dev/null" "${database_file}" <<SQL
 SELECT * FROM pragma_table_info("${table_name}") ORDER BY cid;
 SQL
   assert_output <<EOS
@@ -33,7 +35,7 @@ EOS
 @test "alter existing table" {
   database_file="$(generate_database_file "${BATS_TEST_FILENAME##*/}")"
   table_name="$(generate_table_name "${BATS_TEST_FILENAME##*/}")"
-  sqlite3 "${database_file}" <<SQL
+  sqlite3 -init "/dev/null" "${database_file}" <<SQL
 CREATE TABLE "${table_name}" (_Id INTEGER);
 SQL
   run json2sqlite3 "${database_file}" "${table_name}" < <(
@@ -44,7 +46,7 @@ SQL
     ]'
   )
   assert_success
-  run sqlite3 "${database_file}" <<SQL
+  run sqlite3 -init "/dev/null" "${database_file}" <<SQL
 SELECT * FROM "${table_name}" ORDER BY _Id;
 SQL
   assert_output <<EOS
@@ -58,7 +60,7 @@ EOS
 @test "alter existing table with case insensitivity on column names" {
   database_file="$(generate_database_file "${BATS_TEST_FILENAME##*/}")"
   table_name="$(generate_table_name "${BATS_TEST_FILENAME##*/}")"
-  sqlite3 "${database_file}" <<SQL
+  sqlite3 -init "/dev/null" "${database_file}" <<SQL
 CREATE TABLE "${table_name}" (_Id INTEGER, Foo TEXT, BAR TEXT);
 SQL
   run json2sqlite3 "${database_file}" "${table_name}" < <(
@@ -69,7 +71,7 @@ SQL
     ]'
   )
   assert_success
-  run sqlite3 "${database_file}" <<SQL
+  run sqlite3 -init "/dev/null" "${database_file}" <<SQL
 SELECT * FROM "${table_name}" ORDER BY _Id;
 SQL
   assert_output <<EOS
@@ -83,7 +85,7 @@ EOS
 @test "alter existing table with primary key" {
   database_file="$(generate_database_file "${BATS_TEST_FILENAME##*/}")"
   table_name="$(generate_table_name "${BATS_TEST_FILENAME##*/}")"
-  sqlite3 "${database_file}" <<SQL
+  sqlite3 -init "/dev/null" "${database_file}" <<SQL
 CREATE TABLE "${table_name}" (_Id INTEGER PRIMARY KEY, foo TEXT);
 SQL
   run json2sqlite3 --primary-key-column=_Id "${database_file}" "${table_name}" < <(
@@ -94,7 +96,7 @@ SQL
     ]'
   )
   assert_success
-  run sqlite3 "${database_file}" <<SQL
+  run sqlite3 -init "/dev/null" "${database_file}" <<SQL
 SELECT * FROM "${table_name}" ORDER BY _Id;
 SQL
   assert_output <<EOS
@@ -107,7 +109,7 @@ EOS
 @test "alter existing table with primary key and timestamp columns" {
   database_file="$(generate_database_file "${BATS_TEST_FILENAME##*/}")"
   table_name="$(generate_table_name "${BATS_TEST_FILENAME##*/}")"
-  sqlite3 "${database_file}" <<SQL
+  sqlite3 -init "/dev/null" "${database_file}" <<SQL
 CREATE TABLE "${table_name}" (_Id INTEGER PRIMARY KEY, foo TEXT, bar TEXT);
 SQL
   run json2sqlite3 --primary-key-column=_Id --created-column=_CreatedAt --updated-column=_UpdatedAt --deleted-column=_DeletedAt "${database_file}" "${table_name}" < <(
@@ -118,7 +120,7 @@ SQL
     ]'
   )
   assert_success
-  run sqlite3 "${database_file}" <<SQL
+  run sqlite3 -init "/dev/null" "${database_file}" <<SQL
 SELECT * FROM "${table_name}" ORDER BY _Id;
 SQL
   assert_output <<EOS

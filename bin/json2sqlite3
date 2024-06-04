@@ -144,7 +144,7 @@ runq() {
     ppq "$@" | debug
   fi
   if [[ -z "${DRY_RUN:-}" ]]; then
-    sqlite3 -batch "$@"
+    sqlite3 -batch -init "/dev/null" "$@"
   fi
 }
 
@@ -244,7 +244,7 @@ detect_column_specs_from_json() {
           end) as $sqlite_type | [.key, $sqlite_type]
         )
       ) | if 0 < length then add[] else [] end | @csv' < "${json_file}" > "${csv_file}"; then
-      sqlite3 -batch "/dev/null" \
+      sqlite3 -batch -init "/dev/null" "/dev/null" \
         ".mode list" \
         ".timeout ${SQLITE_BUSY_TIMEOUT}" \
         "CREATE TEMPORARY TABLE _s1 (name TEXT, type TEXT);" \
@@ -264,7 +264,7 @@ detect_column_specs_from_json() {
 detect_column_specs_from_table() {
   local database_file="$1"
   local table_name="$2"
-  sqlite3 -batch "${database_file}" \
+  sqlite3 -batch -init "/dev/null" "${database_file}" \
     ".mode list" \
     ".timeout ${SQLITE_BUSY_TIMEOUT}" \
     ".parameter set @table_name '${table_name}'" \
@@ -388,7 +388,7 @@ reconcile_column_specs3() {
   jq --raw-output 'map([.cid, .name, .type, .notnull, .dflt_value, .pk])[] | @csv' <<< "${spec1}" > "${s1}"
   jq --raw-output 'map([.cid, .name, .type, .notnull, .dflt_value, .pk])[] | @csv' <<< "${spec2}" > "${s2}"
   jq --raw-output 'map([.cid, .name, .type, .notnull, .dflt_value, .pk])[] | @csv' <<< "${spec3}" > "${s3}"
-  sqlite3 -batch /dev/null \
+  sqlite3 -batch -init "/dev/null" "/dev/null" \
     ".mode list" \
     ".timeout ${SQLITE_BUSY_TIMEOUT}" \
     "CREATE TEMPORARY TABLE s1 (cid INTEGER, name TEXT, type TEXT, \"notnull\" INTEGER, dflt_value BLOB, pk INTEGER);" \
@@ -819,7 +819,7 @@ fi
 # managing table schema...
 table_description=""
 reconciled_column_specs='[]'
-if sqlite3 -batch "${arg_database_file}" ".mode list" ".timeout ${SQLITE_BUSY_TIMEOUT}" "SELECT 1 FROM \"${arg_table_name}\" LIMIT 1;" 1>/dev/null 2>&1; then
+if sqlite3 -batch -init "/dev/null" "${arg_database_file}" ".mode list" ".timeout ${SQLITE_BUSY_TIMEOUT}" "SELECT 1 FROM \"${arg_table_name}\" LIMIT 1;" 1>/dev/null 2>&1; then
   debug "${0##*/}: detected existing table. inspecting schema information..."
   current_column_specs="$(detect_column_specs_from_table "${arg_database_file}" "${arg_table_name}" || true)"
   if [[ -z "${current_column_specs:-}" ]]; then

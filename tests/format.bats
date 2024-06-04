@@ -5,7 +5,7 @@ load test_helper
 @test "insert with json format" {
   database_file="$(generate_database_file "${BATS_TEST_FILENAME##*/}")"
   table_name="$(generate_table_name "${BATS_TEST_FILENAME##*/}")"
-  sqlite3 "${database_file}" <<SQL
+  sqlite3 -init "/dev/null" "${database_file}" <<SQL
 CREATE TABLE "${table_name}" (_Id INTEGER PRIMARY KEY, foo TEXT, bar TEXT);
 SQL
   run json2sqlite3 --primary-key-column=_Id --format=json "${database_file}" "${table_name}" < <(
@@ -15,7 +15,7 @@ SQL
     ]'
   )
   assert_success
-  run sqlite3 "${database_file}" <<SQL
+  run sqlite3 -init "/dev/null" "${database_file}" <<SQL
 SELECT _Id, foo, bar FROM "${table_name}" ORDER BY _Id;
 SQL
   assert_output <<EOS
@@ -28,7 +28,7 @@ EOS
 @test "insert with jsonl format" {
   database_file="$(generate_database_file "${BATS_TEST_FILENAME##*/}")"
   table_name="$(generate_table_name "${BATS_TEST_FILENAME##*/}")"
-  sqlite3 "${database_file}" <<SQL
+  sqlite3 -init "/dev/null" "${database_file}" <<SQL
 CREATE TABLE "${table_name}" (_Id INTEGER PRIMARY KEY, foo TEXT, bar TEXT);
 SQL
   run json2sqlite3 --primary-key-column=_Id --format=jsonl "${database_file}" "${table_name}" < <(
@@ -38,7 +38,7 @@ SQL
     ][]'
   )
   assert_success
-  run sqlite3 "${database_file}" <<SQL
+  run sqlite3 -init "/dev/null" "${database_file}" <<SQL
 SELECT _Id, foo, bar FROM "${table_name}" ORDER BY _Id;
 SQL
   assert_output <<EOS
@@ -51,7 +51,7 @@ EOS
 @test "insert with unsupported format" {
   database_file="$(generate_database_file "${BATS_TEST_FILENAME##*/}")"
   table_name="$(generate_table_name "${BATS_TEST_FILENAME##*/}")"
-  sqlite3 "${database_file}" <<SQL
+  sqlite3 -init "/dev/null" "${database_file}" <<SQL
 CREATE TABLE "${table_name}" (_Id INTEGER PRIMARY KEY, foo TEXT, bar TEXT);
 SQL
   run json2sqlite3 --primary-key-column=_Id --format=unsupported "${database_file}" "${table_name}" < <(
