@@ -108,8 +108,8 @@ validate_type() {
     "BLOB" ) :;;
     "NUMERIC" | "NUM" ) :;;
     "INTEGER" | "INT" ) :;;
-    "REAL" ) :;;
-    "TEXT" | "JSON" ) :;;
+    "REAL" | "DOUBLE" ) :;;
+    "TEXT" | "JSON" | "VARCHAR" ) :;;
     * )
       error "${0##*/}: unsupported SQLite3 data type: ${ident:-}" 1>&2
       exit 1
@@ -1014,12 +1014,12 @@ if jq --argjson current_column_specs "${current_column_specs:-[]}" --raw-output 
           ($item[$column_name] | tojson)
         elif ("NULL" == $column_type) then
           null
-        elif ("REAL" == $column_type) then
+        elif ("REAL" == $column_type or "DOUBLE" == $column_type) then
           $item[$column_name]
-        elif ("TEXT" == $column_type) then
+        elif ("TEXT" == $column_type or "VARCHAR" == $column_type) then
           $item[$column_name]
         else
-          error("unsupported SQLite data type: \($column_name):\($column_type)")
+          error("unsupported SQLite3 data type: \($column_name):\($column_type)")
         end
       end
     )
