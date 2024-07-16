@@ -1017,7 +1017,14 @@ if jq --argjson current_column_specs "${current_column_specs:-[]}" --raw-output 
         elif ("REAL" == $column_type or "DOUBLE" == $column_type) then
           $item[$column_name]
         elif ("TEXT" == $column_type or "VARCHAR" == $column_type) then
-          $item[$column_name]
+          # DuckDB generates VARCHAR column for arbitrary JSON values.
+          if ($item[$column_name] | type == "array") then
+            ($item[$column_name] | tojson)
+          elif ($item[$column_name] | type == "object") then
+            ($item[$column_name] | tojson)
+          else
+            $item[$column_name]
+          end
         else
           error("unsupported SQLite3 data type: \($column_name):\($column_type)")
         end
