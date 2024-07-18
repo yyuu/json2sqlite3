@@ -124,7 +124,7 @@ EOS
   database_file="$(generate_database_file "${BATS_TEST_FILENAME##*/}")"
   table_name="$(generate_table_name "${BATS_TEST_FILENAME##*/}")"
   sqlite3 -init "/dev/null" "${database_file}" <<SQL
-CREATE TABLE "${table_name}" (_Id DOUBLE PRIMARY KEY, foo VARCHAR, bar VARCHAR, _CreatedAt DOUBLE, _UpdatedAt DOUBLE, _DeletedAt DOUBLE);
+CREATE TABLE "${table_name}" (_Id DOUBLE PRIMARY KEY, foo VARCHAR, bar VARCHAR, baz BIGINT, _CreatedAt DOUBLE, _UpdatedAt DOUBLE, _DeletedAt DOUBLE);
 INSERT INTO "${table_name}" (_Id, foo, _CreatedAt, _UpdatedAt, _DeletedAt) VALUES (1, '["FOO1"]', 1234567890, 1234567893, -1);
 INSERT INTO "${table_name}" (_Id, foo, _CreatedAt, _UpdatedAt, _DeletedAt) VALUES (2, '["FOO2"]', -1, -1, -1);
 SQL
@@ -138,8 +138,8 @@ SQL
     "${table_name}" \
     < <(
     jq --compact-output --null-input '[
-      {"_Id": 2, "foo": ["FOO2"], "bar": {"Key": "bar", "Value": "BAR2"}, "_CreatedAt":1234567891, "_UpdatedAt": 1234567894, "_DeletedAt": 1234567897},
-      {"_Id": 3, "foo": ["FOO3"], "bar": {"Key": "bar", "Value": "BAR3"}, "_CreatedAt":1234567892, "_UpdatedAt": 1234567895, "_DeletedAt": -1}
+      {"_Id": 2, "foo": ["FOO2"], "bar": {"Key": "bar", "Value": "BAR2"}, "baz": 4294967297, "_CreatedAt":1234567891, "_UpdatedAt": 1234567894, "_DeletedAt": 1234567897},
+      {"_Id": 3, "foo": ["FOO3"], "bar": {"Key": "bar", "Value": "BAR3"}, "baz": 4294967298, "_CreatedAt":1234567892, "_UpdatedAt": 1234567895, "_DeletedAt": -1}
     ]'
   )
   assert_success
@@ -147,9 +147,9 @@ SQL
 SELECT * FROM "${table_name}" ORDER BY _Id;
 SQL
   assert_output <<EOS
-1.0|["FOO1"]||1234567890.0|1234567893.0|-1.0
-2.0|["FOO2"]|{"Key":"bar","Value":"BAR2"}|1234567891.0|1234567894.0|1234567897.0
-3.0|["FOO3"]|{"Key":"bar","Value":"BAR3"}|1234567892.0|1234567895.0|-1.0
+1.0|["FOO1"]|||1234567890.0|1234567893.0|-1.0
+2.0|["FOO2"]|{"Key":"bar","Value":"BAR2"}|4294967297|1234567891.0|1234567894.0|1234567897.0
+3.0|["FOO3"]|{"Key":"bar","Value":"BAR3"}|4294967298|1234567892.0|1234567895.0|-1.0
 EOS
   assert_success
 }
